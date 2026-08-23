@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.nanometer</groupId>
+        <artifactId>nanometer-parent</artifactId>
+        <version>0.1.0</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>nanometer-api</artifactId>
+    <packaging>jar</packaging>
+
+    <name>Nanometer :: API &amp; Runtime</name>
+    <description>Main Facade API, Integration Runtime, and Architecture Tests</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.nanometer</groupId>
+            <artifactId>nanometer-model</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.nanometer</groupId>
+            <artifactId>nanometer-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.nanometer</groupId>
+            <artifactId>nanometer-storage</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.nanometer</groupId>
+            <artifactId>nanometer-agent</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.nanometer</groupId>
+            <artifactId>nanometer-visualizer</artifactId>
+        </dependency>
+
+        <!-- Testing -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>se.deversity.async-test-lib</groupId>
+            <artifactId>async-test-lib</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.tngtech.archunit</groupId>
+            <artifactId>archunit-junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Shaded JAR Plugin (relocating bytebuddy and sqlite for zero classpath conflict) -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.5.2</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <shadedArtifactAttached>true</shadedArtifactAttached>
+                            <shadedClassifierName>all</shadedClassifierName>
+                            <relocations>
+                                <relocation>
+                                    <pattern>net.bytebuddy</pattern>
+                                    <shadedPattern>nanometer.shaded.bytebuddy</shadedPattern>
+                                </relocation>
+                                <relocation>
+                                    <pattern>org.sqlite</pattern>
+                                    <shadedPattern>nanometer.shaded.sqlite</shadedPattern>
+                                </relocation>
+                            </relocations>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <manifestEntries>
+                                        <Premain-Class>nanometer.agent.NanometerAgent</Premain-Class>
+                                        <Agent-Class>nanometer.agent.NanometerAgent</Agent-Class>
+                                        <Can-Redefine-Classes>true</Can-Redefine-Classes>
+                                        <Can-Retransform-Classes>true</Can-Retransform-Classes>
+                                    </manifestEntries>
+                                </transformer>
+                            </transformers>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

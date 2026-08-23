@@ -1,0 +1,11 @@
+target/
+build/
+.gradle/
+.nanometer/
+*.db
+*.log
+.vibetags-cache
+.vibetags-mod-*
+.idea/
+*.iml
+.DS_Store

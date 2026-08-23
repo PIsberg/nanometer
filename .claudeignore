@@ -1,0 +1,8 @@
+target/
+.nanometer/
+*.db
+*.log
+
+# VIBETAGS-START
+
+# VIBETAGS-END

@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.nanometer</groupId>
+        <artifactId>nanometer-parent</artifactId>
+        <version>0.1.0</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>nanometer-agent</artifactId>
+    <packaging>jar</packaging>
+
+    <name>Nanometer :: Agent</name>
+    <description>Bytecode Interceptor and Dynamic Java Agent Attachment</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.nanometer</groupId>
+            <artifactId>nanometer-model</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.nanometer</groupId>
+            <artifactId>nanometer-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>net.bytebuddy</groupId>
+            <artifactId>byte-buddy</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>net.bytebuddy</groupId>
+            <artifactId>byte-buddy-agent</artifactId>
+        </dependency>
+    </dependencies>
+</project>
