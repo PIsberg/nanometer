@@ -44,6 +44,7 @@ The following elements are well-tested core components. Make changes with extrem
 - `nanometer.buffer.MetricRingBuffer`: Sensitivity: High. Note: Lock-free circular buffer utilizing atomic CAS pointers for zero-allocation telemetry
 - `nanometer.discovery.GraphAutoDiscoveryEngine`: Sensitivity: High. Note: Automated chart and topology schema discovery engine
 - `nanometer.graph.GraphMetricAggregator`: Sensitivity: High. Note: Topology DAG maintaining runtime call hierarchy and error paths
+- `nanometer.system.SystemMetricsSampler`: Sensitivity: High. Note: JVM runtime telemetry and hardware utilization sampler
 
 ## Scoped Rules Index
 Detailed per-element guardrails live in scoped rule files that load automatically when you open the matching source file. Consult the referenced file before modifying an element:
@@ -51,6 +52,7 @@ Detailed per-element guardrails live in scoped rule files that load automaticall
 - `nanometer.buffer.MetricRingBuffer` → `.gemini/rules/nanometer-buffer-MetricRingBuffer.md`
 - `nanometer.discovery.GraphAutoDiscoveryEngine` → `.gemini/rules/nanometer-discovery-GraphAutoDiscoveryEngine.md`
 - `nanometer.graph.GraphMetricAggregator` → `.gemini/rules/nanometer-graph-GraphMetricAggregator.md`
+- `nanometer.system.SystemMetricsSampler` → `.gemini/rules/nanometer-system-SystemMetricsSampler.md`
 <!-- VIBETAGS-MODULE-END: nanometer-core -->
 <!-- VIBETAGS-MODULE: nanometer-model -->
 # AUTO-GENERATED AI RULES
@@ -90,7 +92,7 @@ Detailed per-element guardrails live in scoped rule files that load automaticall
 ## 🧠 CORE FUNCTIONALITY (CHANGE WITH EXTREME CAUTION)
 The following elements are well-tested core components. Make changes with extreme caution.
 
-- `nanometer.server.NanometerVisualizerServer`: Sensitivity: High. Note: Embedded zero-dependency HTTP visualizer server
+- `nanometer.server.NanometerVisualizerServer`: Sensitivity: High. Note: Embedded zero-dependency HTTP visualizer server with charts and topology
 
 ## Scoped Rules Index
 Detailed per-element guardrails live in scoped rule files that load automatically when you open the matching source file. Consult the referenced file before modifying an element:

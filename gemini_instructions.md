@@ -68,6 +68,7 @@ The following elements are well-tested core components. Make changes with extrem
 - `nanometer.buffer.MetricRingBuffer`: Sensitivity: High. Note: Lock-free circular buffer utilizing atomic CAS pointers for zero-allocation telemetry
 - `nanometer.discovery.GraphAutoDiscoveryEngine`: Sensitivity: High. Note: Automated chart and topology schema discovery engine
 - `nanometer.graph.GraphMetricAggregator`: Sensitivity: High. Note: Topology DAG maintaining runtime call hierarchy and error paths
+- `nanometer.system.SystemMetricsSampler`: Sensitivity: High. Note: JVM runtime telemetry and hardware utilization sampler
 
 ## PERFORMANCE CONSTRAINTS (HOT PATH)
 Never introduce O(n²) complexity into these elements. Always reason about complexity before proposing changes:
@@ -84,6 +85,13 @@ These elements are thread-safe by design — preserve the synchronization invari
 The following elements emit metrics, traces, or log statements watched by dashboards. Preserve every instrumentation point:
 
 - `nanometer.discovery.GraphAutoDiscoveryEngine`: Metrics: chart_discovery_count. 
+- `nanometer.system.SystemMetricsSampler`: Metrics: cpu_process_percent, cpu_system_percent, heap_used_mb, thread_count. 
+
+## PUBLIC API SURFACE PROTECTION
+Preserve public signatures, Javadoc, and backwards compatibility:
+
+- `nanometer.discovery.GraphAutoDiscoveryEngine`: Public API surface. Preserve signature, Javadoc, backwards compatibility, and binary/source stability. Reason: Public discovery interface for generating graph and system telemetry JSON payloads
+- `nanometer.system.SystemMetricsSampler`: Public API surface. Preserve signature, Javadoc, backwards compatibility, and binary/source stability. Reason: Public interface for capturing instant JVM & OS resource utilization snapshots
 
 ## MEMORY ALLOCATION BUDGETS
 The following elements have strict heap allocation, autoboxing, or garbage budgets. Optimize allocations carefully:
@@ -138,7 +146,7 @@ The following elements emit metrics, traces, or log statements watched by dashbo
 ## CORE FUNCTIONALITY (EXTREME CAUTION)
 The following elements are well-tested core components. Make changes with extreme caution:
 
-- `nanometer.server.NanometerVisualizerServer`: Sensitivity: High. Note: Embedded zero-dependency HTTP visualizer server
+- `nanometer.server.NanometerVisualizerServer`: Sensitivity: High. Note: Embedded zero-dependency HTTP visualizer server with charts and topology
 
 ## THREAD-SAFE BY DESIGN
 These elements are thread-safe by design — preserve the synchronization invariant on every change:

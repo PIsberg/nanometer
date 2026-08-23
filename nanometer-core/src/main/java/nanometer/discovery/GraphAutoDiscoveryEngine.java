@@ -1,9 +1,12 @@
 package nanometer.discovery;
 
 import nanometer.graph.GraphMetricAggregator;
+import nanometer.system.SystemMetricsSampler;
+import nanometer.system.SystemMetricsSampler.SystemSnapshot;
 import org.jspecify.annotations.Nullable;
 import se.deversity.vibetags.annotations.AICore;
 import se.deversity.vibetags.annotations.AIObservability;
+import se.deversity.vibetags.annotations.AIPublicAPI;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -14,6 +17,7 @@ import java.util.Map;
  */
 @AICore(sensitivity = "High", note = "Automated chart and topology schema discovery engine")
 @AIObservability(metrics = {"chart_discovery_count"})
+@AIPublicAPI(reason = "Public discovery interface for generating graph and system telemetry JSON payloads")
 public class GraphAutoDiscoveryEngine {
 
     public record ChartSpec(String chartType, String title, String description) {}
@@ -23,11 +27,16 @@ public class GraphAutoDiscoveryEngine {
                 new ChartSpec("LINE", "Throughput & Rate", "Real-time method executions over time"),
                 new ChartSpec("DONUT", "Exception Breakdown", "Distribution of unhandled error types"),
                 new ChartSpec("BAR", "Top 10 Slowest Methods (p95 ms)", "95th percentile execution durations"),
-                new ChartSpec("DAG", "Causality & Dependency Topology", "Live dynamic method call graph & error paths")
+                new ChartSpec("DAG", "Causality & Dependency Topology", "Live dynamic method call graph & error paths"),
+                new ChartSpec("GAUGE", "System CPU & Memory", "Live JVM heap, non-heap, and processor utilization")
         );
     }
 
     public static String generateGraphJson(GraphMetricAggregator aggregator) {
+        return generateGraphJson(aggregator, SystemMetricsSampler.captureSnapshot());
+    }
+
+    public static String generateGraphJson(GraphMetricAggregator aggregator, @Nullable SystemSnapshot systemSnapshot) {
         StringBuilder sb = new StringBuilder();
         sb.append("{ \"nodes\": [");
 
@@ -38,6 +47,7 @@ public class GraphAutoDiscoveryEngine {
             boolean isException = "Exception".equalsIgnoreCase(key.className());
 
             nodeJsonList.add(String.format(
+                    java.util.Locale.US,
                     "{\"id\":\"%s\",\"label\":\"%s\",\"calls\":%d,\"errors\":%d,\"p95\":%.2f,\"avg\":%.2f,\"isException\":%b}",
                     escapeJson(key.toString()),
                     escapeJson(key.methodName()),
@@ -65,8 +75,13 @@ public class GraphAutoDiscoveryEngine {
             ));
         }
         sb.append(String.join(",", edgeJsonList));
-        sb.append("] }");
+        sb.append("]");
 
+        if (systemSnapshot != null) {
+            sb.append(", \"system\": ").append(systemSnapshot.toJson());
+        }
+
+        sb.append(" }");
         return sb.toString();
     }
 

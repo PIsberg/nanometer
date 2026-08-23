@@ -44,6 +44,8 @@ public class NanometerVisualizerServerTest {
         assertEquals(200, res.statusCode());
         assertTrue(res.body().contains("Nanometer Embedded APM"));
         assertTrue(res.body().contains("<!DOCTYPE html>"));
+        assertTrue(res.body().contains("topology-canvas"));
+        assertTrue(res.body().contains("system-chart"));
     }
 
     @Test
@@ -61,6 +63,20 @@ public class NanometerVisualizerServerTest {
         assertEquals(200, res.statusCode());
         assertTrue(res.body().contains("VisualizerTestService.render"));
         assertTrue(res.body().contains("\"nodes\":"));
+        assertTrue(res.body().contains("\"system\":"));
+    }
+
+    @Test
+    public void testApiSystemEndpoint() throws Exception {
+        HttpRequest req = HttpRequest.newBuilder()
+                .uri(URI.create("http://localhost:" + PORT + "/api/system"))
+                .GET()
+                .build();
+
+        HttpResponse<String> res = client.send(req, HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, res.statusCode());
+        assertTrue(res.body().contains("heapUsedMb"));
+        assertTrue(res.body().contains("processCpu"));
     }
 
     @Test
@@ -82,6 +98,15 @@ public class NanometerVisualizerServerTest {
 
         HttpResponse<String> res405 = client.send(req405, HttpResponse.BodyHandlers.ofString());
         assertEquals(405, res405.statusCode());
+
+        // 405 Method Not Allowed on /api/system
+        HttpRequest req405Sys = HttpRequest.newBuilder()
+                .uri(URI.create("http://localhost:" + PORT + "/api/system"))
+                .POST(HttpRequest.BodyPublishers.noBody())
+                .build();
+
+        HttpResponse<String> res405Sys = client.send(req405Sys, HttpResponse.BodyHandlers.ofString());
+        assertEquals(405, res405Sys.statusCode());
     }
 
     @Test

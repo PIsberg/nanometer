@@ -60,6 +60,10 @@
       <sensitivity>High</sensitivity>
       <note>Topology DAG maintaining runtime call hierarchy and error paths</note>
     </element>
+    <element path="nanometer.system.SystemMetricsSampler">
+      <sensitivity>High</sensitivity>
+      <note>JVM runtime telemetry and hardware utilization sampler</note>
+    </element>
   </core_elements>
 
 <rule>Elements listed in <core_elements> are well-tested core components. Make changes with extreme caution and verify comprehensive test coverage before proposing modifications.</rule>
@@ -68,6 +72,7 @@
     <element path="nanometer.buffer.MetricRingBuffer" rules=".claude/rules/nanometer-buffer-MetricRingBuffer.md"/>
     <element path="nanometer.discovery.GraphAutoDiscoveryEngine" rules=".claude/rules/nanometer-discovery-GraphAutoDiscoveryEngine.md"/>
     <element path="nanometer.graph.GraphMetricAggregator" rules=".claude/rules/nanometer-graph-GraphMetricAggregator.md"/>
+    <element path="nanometer.system.SystemMetricsSampler" rules=".claude/rules/nanometer-system-SystemMetricsSampler.md"/>
   </scoped_rules>
 
 <rule>When you work on any element listed in <scoped_rules>, open its referenced rule file and apply the guardrails there. The rule files are the authoritative source for those elements.</rule>
@@ -117,7 +122,7 @@
   <core_elements>
     <element path="nanometer.server.NanometerVisualizerServer">
       <sensitivity>High</sensitivity>
-      <note>Embedded zero-dependency HTTP visualizer server</note>
+      <note>Embedded zero-dependency HTTP visualizer server with charts and topology</note>
     </element>
   </core_elements>
 
