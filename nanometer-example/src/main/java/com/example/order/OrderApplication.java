@@ -16,12 +16,18 @@ public class OrderApplication {
         // 2. Launch embedded visualizer dashboard on port 9090
         Nanometer.startVisualizer(9090);
 
-        // 3. Simulate continuous incoming traffic
+        // 3. Simulate incoming traffic
+        runSimulation(50, 100);
+
+        System.out.println("⚡ Simulation completed. Dashboard available at http://localhost:9090");
+    }
+
+    public static void runSimulation(int iterations, int sleepMs) {
         OrderService orderService = new OrderService();
         String[] customers = {"cust_alice", "cust_bob", "fraud", "timeout", "cust_charlie"};
         String[] items = {"laptop", "phone", "out-of-stock", "tablet", "watch"};
 
-        for (int i = 0; i < 50; i++) {
+        for (int i = 0; i < iterations; i++) {
             String cust = customers[i % customers.length];
             String item = items[i % items.length];
             try {
@@ -29,9 +35,14 @@ public class OrderApplication {
             } catch (Exception ignored) {
                 // Expected simulation errors tracked in APM
             }
-            Thread.sleep(100);
+            if (sleepMs > 0) {
+                try {
+                    Thread.sleep(sleepMs);
+                } catch (InterruptedException ignored) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
         }
-
-        System.out.println("⚡ Simulation completed. Dashboard available at http://localhost:9090");
     }
 }

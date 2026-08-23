@@ -45,5 +45,9 @@ subprojects {
     tasks.withType<Test> {
         useJUnitPlatform()
         systemProperty("license.mock.mode", "true")
+        jvmArgs(
+            "-XX:+EnableDynamicAgentLoading",
+            "-Djdk.attach.allowAttachSelf=true"
+        )
     }
 }

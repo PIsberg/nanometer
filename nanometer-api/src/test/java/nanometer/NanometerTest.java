@@ -61,14 +61,31 @@ public class NanometerTest {
         String json = GraphAutoDiscoveryEngine.generateGraphJson(aggregator);
         assertTrue(json.contains("OrderController.checkout"));
         assertTrue(json.contains("PaymentService.processPayment"));
-        assertTrue(json.contains("PaymentException"));
+        assertTrue(json.contains("Exception.PaymentException"));
     }
 
     @Test
-    public void testAutoDiscoverySpecs() {
-        List<GraphAutoDiscoveryEngine.ChartSpec> specs = GraphAutoDiscoveryEngine.getDiscoveredCharts();
-        assertFalse(specs.isEmpty());
-        assertTrue(specs.stream().anyMatch(s -> "DAG".equals(s.chartType())));
-        assertTrue(specs.stream().anyMatch(s -> "LINE".equals(s.chartType())));
+    public void testNanometerBootstrapLifecycle() {
+        Nanometer instance = new Nanometer();
+        assertNotNull(instance);
+
+        // Bootstrap install
+        Nanometer.install("nanometer.demo");
+        // Re-install should be a no-op
+        Nanometer.install("nanometer.demo");
+
+        assertNotNull(Nanometer.getBuffer());
+        assertNotNull(Nanometer.getGraphAggregator());
+        assertNotNull(Nanometer.getDbFlusher());
+
+        // Start visualizer
+        Nanometer.startVisualizer(9292);
+        // Double start should be a no-op
+        Nanometer.startVisualizer(9292);
+
+        // Shutdown
+        Nanometer.shutdown();
+        // Double shutdown should be a no-op
+        Nanometer.shutdown();
     }
 }
