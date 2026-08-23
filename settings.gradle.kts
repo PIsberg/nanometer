@@ -7,5 +7,6 @@ include(
     "nanometer-storage",
     "nanometer-agent",
     "nanometer-visualizer",
-    "nanometer-api"
+    "nanometer-api",
+    "nanometer-example"
 )

@@ -20,6 +20,7 @@
         <module>nanometer-agent</module>
         <module>nanometer-visualizer</module>
         <module>nanometer-api</module>
+        <module>nanometer-example</module>
     </modules>
 
     <properties>
@@ -71,6 +72,11 @@
             <dependency>
                 <groupId>io.nanometer</groupId>
                 <artifactId>nanometer-api</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.nanometer</groupId>
+                <artifactId>nanometer-example</artifactId>
                 <version>${project.version}</version>
             </dependency>
 
