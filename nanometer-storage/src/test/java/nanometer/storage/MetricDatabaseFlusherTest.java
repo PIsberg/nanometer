@@ -5,7 +5,6 @@ import nanometer.graph.GraphMetricAggregator;
 import nanometer.model.RelationalMetricEvent;
 import org.junit.jupiter.api.Test;
 
-import java.io.File;
 import java.sql.Connection;
 import java.sql.DriverManager;
 
@@ -15,12 +14,7 @@ public class MetricDatabaseFlusherTest {
 
     @Test
     public void testDatabaseFlusherLifecycleAndBatches() throws Exception {
-        File dbFile = new File("target/test_metrics.db");
-        if (dbFile.exists()) {
-            dbFile.delete();
-        }
-
-        Connection connection = DriverManager.getConnection("jdbc:sqlite:target/test_metrics.db");
+        Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:");
         MetricRingBuffer buffer = new MetricRingBuffer(16);
         GraphMetricAggregator aggregator = new GraphMetricAggregator();
 
