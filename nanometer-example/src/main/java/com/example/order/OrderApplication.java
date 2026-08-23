@@ -16,10 +16,33 @@ public class OrderApplication {
         // 2. Launch embedded visualizer dashboard on port 9090
         Nanometer.startVisualizer(9090);
 
-        // 3. Simulate incoming traffic
-        runSimulation(50, 100);
+        System.out.println("⚡ [Nanometer] Embedded APM Dashboard live at http://localhost:9090");
+        System.out.println("⚡ Generating continuous synthetic traffic (Ctrl+C to stop)...");
 
-        System.out.println("⚡ Simulation completed. Dashboard available at http://localhost:9090");
+        // 3. Initial burst of traffic
+        runSimulation(20, 50);
+
+        // 4. Continuous background traffic generator to keep metrics fresh
+        Thread trafficThread = Thread.ofVirtual().start(() -> {
+            while (!Thread.currentThread().isInterrupted()) {
+                try {
+                    Thread.sleep(2000);
+                    runSimulation(5, 50);
+                } catch (InterruptedException e) {
+                    break;
+                }
+            }
+        });
+
+        // 5. Keep main process alive
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            trafficThread.interrupt();
+            Nanometer.shutdown();
+            System.out.println("⚡ OrderApplication stopped.");
+        }));
+
+        // Block main thread to keep HTTP server active
+        Thread.currentThread().join();
     }
 
     public static void runSimulation(int iterations, int sleepMs) {

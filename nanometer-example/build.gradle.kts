@@ -5,6 +5,10 @@ plugins {
 
 application {
     mainClass.set("com.example.order.OrderApplication")
+    applicationDefaultJvmArgs = listOf(
+        "-XX:+EnableDynamicAgentLoading",
+        "-Djdk.attach.allowAttachSelf=true"
+    )
 }
 
 dependencies {
