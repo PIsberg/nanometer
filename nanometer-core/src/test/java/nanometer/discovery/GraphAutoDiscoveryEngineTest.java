@@ -2,6 +2,7 @@ package nanometer.discovery;
 
 import nanometer.graph.GraphMetricAggregator;
 import nanometer.model.RelationalMetricEvent;
+import nanometer.system.SystemMetricsSampler;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -19,6 +20,7 @@ public class GraphAutoDiscoveryEngineTest {
         assertNotNull(emptyJson);
         assertTrue(emptyJson.contains("\"nodes\": []"));
         assertTrue(emptyJson.contains("\"edges\": []"));
+        assertTrue(emptyJson.contains("\"system\":"));
 
         // 2. Populated discover
         aggregator.processEvent(new RelationalMetricEvent(
@@ -35,12 +37,18 @@ public class GraphAutoDiscoveryEngineTest {
         assertTrue(json.contains("Exception.RuntimeException"));
         assertTrue(json.contains("\"isException\":true"));
 
-        // 3. Chart specs
-        List<GraphAutoDiscoveryEngine.ChartSpec> specs = GraphAutoDiscoveryEngine.getDiscoveredCharts();
-        assertEquals(4, specs.size());
-        assertEquals("LINE", specs.get(0).chartType());
+        // 3. Null system snapshot overload
+        String jsonNoSys = GraphAutoDiscoveryEngine.generateGraphJson(aggregator, null);
+        assertNotNull(jsonNoSys);
+        assertFalse(jsonNoSys.contains("\"system\":"));
 
-        // 4. Instantiation & escapeJson
+        // 4. Chart specs
+        List<GraphAutoDiscoveryEngine.ChartSpec> specs = GraphAutoDiscoveryEngine.getDiscoveredCharts();
+        assertEquals(5, specs.size());
+        assertEquals("LINE", specs.get(0).chartType());
+        assertEquals("GAUGE", specs.get(4).chartType());
+
+        // 5. Instantiation
         GraphAutoDiscoveryEngine engine = new GraphAutoDiscoveryEngine();
         assertNotNull(engine);
     }

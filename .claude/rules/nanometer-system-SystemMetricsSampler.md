@@ -1,21 +1,17 @@
 ---
-paths: ["**/NanometerVisualizerServer.java"]
+paths: ["**/SystemMetricsSampler.java"]
 ---
 
 <!-- VIBETAGS-START -->
-# Rules for NanometerVisualizerServer
+# Rules for SystemMetricsSampler
 
 ## Core Functionality
 - **Sensitivity**: High
-- **Note**: Embedded zero-dependency HTTP visualizer server with charts and topology
-
-## Thread-Safety Guarantee
-- **Strategy**: SYNCHRONIZED
-- **Note**: Thread-safe server lifecycle management
+- **Note**: JVM runtime telemetry and hardware utilization sampler
 
 ## Observability Instrumentation
 - **Rule**: Do not remove or rename instrumentation without flagging the affected dashboard.
-- **Details**: Metrics: http_requests_total. 
+- **Details**: Metrics: cpu_process_percent, cpu_system_percent, heap_used_mb, thread_count. 
 
 ## Public API Surface Protection
 - **Rule**: Exposes public API. Preserve signature, Javadoc, and behavior without breaking backwards or source compatibility.

@@ -7,7 +7,7 @@ paths: ["**/NanometerVisualizerServer.java"]
 
 ## Core Functionality
 - **Sensitivity**: High
-- **Note**: Embedded zero-dependency HTTP visualizer server
+- **Note**: Embedded zero-dependency HTTP visualizer server with charts and topology
 
 ## Thread-Safety Guarantee
 - **Strategy**: SYNCHRONIZED
