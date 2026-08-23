@@ -9,7 +9,7 @@
 
 ## 📸 Embedded APM & Multi-Round Topology Visualizer
 
-![Nanometer Embedded APM Dashboard](docs/assets/nanometer_apm_dashboard.jpg)
+![Nanometer Embedded APM Dashboard](docs/assets/nanometer_apm_dashboard.png)
 
 ---
 
