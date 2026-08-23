@@ -11,21 +11,27 @@
         <relativePath>../pom.xml</relativePath>
     </parent>
 
-    <artifactId>nanometer-core</artifactId>
+    <artifactId>nanometer-example</artifactId>
     <packaging>jar</packaging>
 
-    <name>Nanometer :: Core</name>
-    <description>RingBuffer, Graph Aggregator, and Discovery Engine</description>
+    <name>Nanometer :: Example Project</name>
+    <description>Example E-Commerce Application Demonstrating Embedded Nanometer APM</description>
 
     <dependencies>
         <dependency>
             <groupId>io.nanometer</groupId>
-            <artifactId>nanometer-model</artifactId>
+            <artifactId>nanometer-api</artifactId>
         </dependency>
 
+        <!-- Testing -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>se.deversity.async-test-lib</groupId>
+            <artifactId>async-test-lib</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

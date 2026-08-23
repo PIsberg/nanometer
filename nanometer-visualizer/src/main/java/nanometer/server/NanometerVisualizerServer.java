@@ -61,6 +61,10 @@ public class NanometerVisualizerServer {
     private class ApiGraphHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                exchange.sendResponseHeaders(405, -1);
+                return;
+            }
             if (flusher != null) {
                 flusher.flushBatch();
             }
@@ -78,6 +82,10 @@ public class NanometerVisualizerServer {
     private static class DashboardHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
+            if (!"/".equals(exchange.getRequestURI().getPath())) {
+                exchange.sendResponseHeaders(404, -1);
+                return;
+            }
             String html = """
                 <!DOCTYPE html>
                 <html lang="en">

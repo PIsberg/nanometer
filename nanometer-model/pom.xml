@@ -16,4 +16,12 @@
 
     <name>Nanometer :: Model</name>
     <description>Core Telemetry Data Structures and Models</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
 </project>
