@@ -15,7 +15,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ ubuntu-latest ]
-        java: [ '21', '25', '26-ea' ]
+        java: [ '21', '25', '26' ]
         build-tool: [ 'maven', 'gradle' ]
 
     steps:
@@ -26,7 +26,7 @@ jobs:
         uses: actions/setup-java@v4
         with:
           java-version: ${{ matrix.java }}
-          distribution: ${{ matrix.java == '26-ea' && 'oracle' || matrix.java == '25' && 'oracle' || 'temurin' }}
+          distribution: ${{ matrix.java == '21' && 'temurin' || 'oracle' }}
 
       - name: Build & Test with Maven
         if: ${{ matrix.build-tool == 'maven' }}
