@@ -2,10 +2,13 @@ package nanometer;
 
 import nanometer.agent.AutoMetricInterceptor;
 import nanometer.agent.NanometerAgent;
+import nanometer.anomaly.AnomalyDetector;
 import nanometer.buffer.MetricRingBuffer;
 import nanometer.graph.GraphMetricAggregator;
+import nanometer.sampling.AdaptiveSampler;
 import nanometer.server.NanometerVisualizerServer;
 import nanometer.storage.MetricDatabaseFlusher;
+import nanometer.storage.MetricQueryService;
 import net.bytebuddy.agent.ByteBuddyAgent;
 import org.jspecify.annotations.Nullable;
 import se.deversity.vibetags.annotations.AICore;
@@ -31,6 +34,7 @@ public class Nanometer {
     private static volatile @Nullable MetricRingBuffer ringBuffer;
     private static volatile @Nullable GraphMetricAggregator graphAggregator;
     private static volatile @Nullable MetricDatabaseFlusher dbFlusher;
+    private static volatile @Nullable MetricQueryService queryService;
     private static volatile @Nullable NanometerVisualizerServer visualizerServer;
 
     public static synchronized void install(String packagePrefix) {
@@ -56,6 +60,7 @@ public class Nanometer {
                 parent.mkdirs();
             }
             Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbFile.getAbsolutePath());
+            queryService = new MetricQueryService(conn);
             dbFlusher = new MetricDatabaseFlusher(conn, buffer, aggregator);
 
             initialized = true;
@@ -67,7 +72,15 @@ public class Nanometer {
 
     public static synchronized void startVisualizer(int port) {
         if (visualizerServer == null && graphAggregator != null) {
-            NanometerVisualizerServer server = new NanometerVisualizerServer(port, graphAggregator, dbFlusher);
+            NanometerVisualizerServer server = new NanometerVisualizerServer(
+                    port,
+                    graphAggregator,
+                    dbFlusher,
+                    queryService,
+                    new AnomalyDetector(),
+                    AutoMetricInterceptor.getProfileSampler(),
+                    AutoMetricInterceptor.getSampler()
+            );
             server.start();
             visualizerServer = server;
         }
@@ -85,6 +98,14 @@ public class Nanometer {
         return dbFlusher;
     }
 
+    public static @Nullable MetricQueryService getQueryService() {
+        return queryService;
+    }
+
+    public static AdaptiveSampler getSampler() {
+        return AutoMetricInterceptor.getSampler();
+    }
+
     public static synchronized void shutdown() {
         if (visualizerServer != null) {
             visualizerServer.stop();
@@ -94,6 +115,7 @@ public class Nanometer {
             dbFlusher.shutdown();
             dbFlusher = null;
         }
+        queryService = null;
         initialized = false;
     }
 }

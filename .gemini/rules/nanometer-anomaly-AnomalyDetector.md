@@ -1,21 +1,17 @@
----
-paths: ["**/NanometerVisualizerServer.java"]
----
-
 <!-- VIBETAGS-START -->
-# Rules for NanometerVisualizerServer
+# Rules for AnomalyDetector
 
 ## Core Functionality
 - **Sensitivity**: High
-- **Note**: Embedded zero-dependency HTTP visualizer server with analytics and flamegraphs
+- **Note**: Statistical 3-sigma latency anomaly and failure burst detector
 
 ## Thread-Safety Guarantee
 - **Strategy**: SYNCHRONIZED
-- **Note**: Thread-safe server lifecycle management
+- **Note**: Thread-safe Welford statistic accumulation
 
 ## Observability Instrumentation
 - **Rule**: Do not remove or rename instrumentation without flagging the affected dashboard.
-- **Details**: Metrics: http_requests_total. 
+- **Details**: Metrics: anomalies_detected_total, outlier_sigma_score. 
 
 ## Public API Surface Protection
 - **Rule**: Exposes public API. Preserve signature, Javadoc, and behavior without breaking backwards or source compatibility.

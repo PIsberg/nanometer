@@ -41,18 +41,30 @@ Detailed per-element guardrails live in scoped rule files that load automaticall
 ## 🧠 CORE FUNCTIONALITY (CHANGE WITH EXTREME CAUTION)
 The following elements are well-tested core components. Make changes with extreme caution.
 
+- `nanometer.anomaly.AnomalyDetector`: Sensitivity: High. Note: Statistical 3-sigma latency anomaly and failure burst detector
+- `nanometer.anomaly.RootCauseAnalyzer`: Sensitivity: High. Note: Automated DAG failure cascade root cause analyzer and diagnosis engine
 - `nanometer.buffer.MetricRingBuffer`: Sensitivity: High. Note: Lock-free circular buffer utilizing atomic CAS pointers for zero-allocation telemetry
 - `nanometer.discovery.GraphAutoDiscoveryEngine`: Sensitivity: High. Note: Automated chart and topology schema discovery engine
+- `nanometer.export.OtlpJsonExporter`: Sensitivity: High. Note: OpenTelemetry Protocol (OTLP) JSON serializing and HTTP exporter
 - `nanometer.graph.GraphMetricAggregator`: Sensitivity: High. Note: Topology DAG maintaining runtime call hierarchy and error paths
+- `nanometer.profiling.JfrProfileSampler`: Sensitivity: High. Note: On-demand execution stack frame profiler and Flamegraph tree generator
+- `nanometer.sampling.AdaptiveSampler`: Sensitivity: High. Note: Adaptive tail sampler and dynamic package filter controller
 - `nanometer.system.SystemMetricsSampler`: Sensitivity: High. Note: JVM runtime telemetry and hardware utilization sampler
+- `nanometer.trace.W3CTraceContext`: Sensitivity: High. Note: W3C Distributed Trace Context and cross-service span propagator
 
 ## Scoped Rules Index
 Detailed per-element guardrails live in scoped rule files that load automatically when you open the matching source file. Consult the referenced file before modifying an element:
 
+- `nanometer.anomaly.AnomalyDetector` → `.gemini/rules/nanometer-anomaly-AnomalyDetector.md`
+- `nanometer.anomaly.RootCauseAnalyzer` → `.gemini/rules/nanometer-anomaly-RootCauseAnalyzer.md`
 - `nanometer.buffer.MetricRingBuffer` → `.gemini/rules/nanometer-buffer-MetricRingBuffer.md`
 - `nanometer.discovery.GraphAutoDiscoveryEngine` → `.gemini/rules/nanometer-discovery-GraphAutoDiscoveryEngine.md`
+- `nanometer.export.OtlpJsonExporter` → `.gemini/rules/nanometer-export-OtlpJsonExporter.md`
 - `nanometer.graph.GraphMetricAggregator` → `.gemini/rules/nanometer-graph-GraphMetricAggregator.md`
+- `nanometer.profiling.JfrProfileSampler` → `.gemini/rules/nanometer-profiling-JfrProfileSampler.md`
+- `nanometer.sampling.AdaptiveSampler` → `.gemini/rules/nanometer-sampling-AdaptiveSampler.md`
 - `nanometer.system.SystemMetricsSampler` → `.gemini/rules/nanometer-system-SystemMetricsSampler.md`
+- `nanometer.trace.W3CTraceContext` → `.gemini/rules/nanometer-trace-W3CTraceContext.md`
 <!-- VIBETAGS-MODULE-END: nanometer-core -->
 <!-- VIBETAGS-MODULE: nanometer-model -->
 # AUTO-GENERATED AI RULES
@@ -78,11 +90,13 @@ Detailed per-element guardrails live in scoped rule files that load automaticall
 The following elements are well-tested core components. Make changes with extreme caution.
 
 - `nanometer.storage.MetricDatabaseFlusher`: Sensitivity: High. Note: Background worker managing WAL mode SQLite transaction batches
+- `nanometer.storage.MetricQueryService`: Sensitivity: High. Note: Read-only SQLite analytics query service and canned report engine
 
 ## Scoped Rules Index
 Detailed per-element guardrails live in scoped rule files that load automatically when you open the matching source file. Consult the referenced file before modifying an element:
 
 - `nanometer.storage.MetricDatabaseFlusher` → `.gemini/rules/nanometer-storage-MetricDatabaseFlusher.md`
+- `nanometer.storage.MetricQueryService` → `.gemini/rules/nanometer-storage-MetricQueryService.md`
 <!-- VIBETAGS-MODULE-END: nanometer-storage -->
 <!-- VIBETAGS-MODULE: nanometer-visualizer -->
 # AUTO-GENERATED AI RULES
@@ -92,7 +106,7 @@ Detailed per-element guardrails live in scoped rule files that load automaticall
 ## 🧠 CORE FUNCTIONALITY (CHANGE WITH EXTREME CAUTION)
 The following elements are well-tested core components. Make changes with extreme caution.
 
-- `nanometer.server.NanometerVisualizerServer`: Sensitivity: High. Note: Embedded zero-dependency HTTP visualizer server with charts and topology
+- `nanometer.server.NanometerVisualizerServer`: Sensitivity: High. Note: Embedded zero-dependency HTTP visualizer server with analytics and flamegraphs
 
 ## Scoped Rules Index
 Detailed per-element guardrails live in scoped rule files that load automatically when you open the matching source file. Consult the referenced file before modifying an element:

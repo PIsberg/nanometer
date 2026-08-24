@@ -65,10 +65,16 @@ Preserve public signatures, Javadoc, and backwards compatibility:
 ## CORE FUNCTIONALITY (EXTREME CAUTION)
 The following elements are well-tested core components. Make changes with extreme caution:
 
+- `nanometer.anomaly.AnomalyDetector`: Sensitivity: High. Note: Statistical 3-sigma latency anomaly and failure burst detector
+- `nanometer.anomaly.RootCauseAnalyzer`: Sensitivity: High. Note: Automated DAG failure cascade root cause analyzer and diagnosis engine
 - `nanometer.buffer.MetricRingBuffer`: Sensitivity: High. Note: Lock-free circular buffer utilizing atomic CAS pointers for zero-allocation telemetry
 - `nanometer.discovery.GraphAutoDiscoveryEngine`: Sensitivity: High. Note: Automated chart and topology schema discovery engine
+- `nanometer.export.OtlpJsonExporter`: Sensitivity: High. Note: OpenTelemetry Protocol (OTLP) JSON serializing and HTTP exporter
 - `nanometer.graph.GraphMetricAggregator`: Sensitivity: High. Note: Topology DAG maintaining runtime call hierarchy and error paths
+- `nanometer.profiling.JfrProfileSampler`: Sensitivity: High. Note: On-demand execution stack frame profiler and Flamegraph tree generator
+- `nanometer.sampling.AdaptiveSampler`: Sensitivity: High. Note: Adaptive tail sampler and dynamic package filter controller
 - `nanometer.system.SystemMetricsSampler`: Sensitivity: High. Note: JVM runtime telemetry and hardware utilization sampler
+- `nanometer.trace.W3CTraceContext`: Sensitivity: High. Note: W3C Distributed Trace Context and cross-service span propagator
 
 ## PERFORMANCE CONSTRAINTS (HOT PATH)
 Never introduce O(n²) complexity into these elements. Always reason about complexity before proposing changes:
@@ -78,20 +84,36 @@ Never introduce O(n²) complexity into these elements. Always reason about compl
 ## THREAD-SAFE BY DESIGN
 These elements are thread-safe by design — preserve the synchronization invariant on every change:
 
+- `nanometer.anomaly.AnomalyDetector`: Strategy: SYNCHRONIZED. Note: Thread-safe Welford statistic accumulation
 - `nanometer.buffer.MetricRingBuffer`: Strategy: LOCK_FREE. Note: Lock-free circular buffer with atomic CAS sequences
 - `nanometer.graph.GraphMetricAggregator`: Strategy: LOCK_FREE. Note: ConcurrentHashMap and LongAdder aggregation
+- `nanometer.profiling.JfrProfileSampler`: Strategy: LOCK_FREE. Note: Concurrent hierarchical frame aggregation
+- `nanometer.sampling.AdaptiveSampler`: Strategy: LOCK_FREE. Note: Thread-safe atomic sampling and concurrent package sets
+- `nanometer.trace.W3CTraceContext`: Strategy: THREAD_LOCAL. Note: Thread-isolated active trace context management
 
 ## OBSERVABILITY INSTRUMENTATION
 The following elements emit metrics, traces, or log statements watched by dashboards. Preserve every instrumentation point:
 
+- `nanometer.anomaly.AnomalyDetector`: Metrics: anomalies_detected_total, outlier_sigma_score. 
+- `nanometer.anomaly.RootCauseAnalyzer`: Metrics: rca_evaluations_total, root_causes_identified. 
 - `nanometer.discovery.GraphAutoDiscoveryEngine`: Metrics: chart_discovery_count. 
+- `nanometer.export.OtlpJsonExporter`: Metrics: otlp_exported_spans_total, otlp_export_duration_ms. 
+- `nanometer.profiling.JfrProfileSampler`: Metrics: profiled_samples_total, flamegraph_tree_depth. 
+- `nanometer.sampling.AdaptiveSampler`: Metrics: sampled_events_ratio, active_package_filters_count. 
 - `nanometer.system.SystemMetricsSampler`: Metrics: cpu_process_percent, cpu_system_percent, heap_used_mb, thread_count. 
+- `nanometer.trace.W3CTraceContext`: Metrics: w3c_traces_propagated. Traces: traceparent_propagation. 
 
 ## PUBLIC API SURFACE PROTECTION
 Preserve public signatures, Javadoc, and backwards compatibility:
 
+- `nanometer.anomaly.AnomalyDetector`: Public API surface. Preserve signature, Javadoc, backwards compatibility, and binary/source stability. Reason: Statistical anomaly detection interface for real-time telemetry
+- `nanometer.anomaly.RootCauseAnalyzer`: Public API surface. Preserve signature, Javadoc, backwards compatibility, and binary/source stability. Reason: Root Cause Analysis (RCA) inference API
 - `nanometer.discovery.GraphAutoDiscoveryEngine`: Public API surface. Preserve signature, Javadoc, backwards compatibility, and binary/source stability. Reason: Public discovery interface for generating graph and system telemetry JSON payloads
+- `nanometer.export.OtlpJsonExporter`: Public API surface. Preserve signature, Javadoc, backwards compatibility, and binary/source stability. Reason: OTLP span serialization and distributed tracing telemetry export
+- `nanometer.profiling.JfrProfileSampler`: Public API surface. Preserve signature, Javadoc, backwards compatibility, and binary/source stability. Reason: Public interface for capturing and rendering call-tree flamegraphs
+- `nanometer.sampling.AdaptiveSampler`: Public API surface. Preserve signature, Javadoc, backwards compatibility, and binary/source stability. Reason: Dynamic sampling and runtime instrumentation configuration API
 - `nanometer.system.SystemMetricsSampler`: Public API surface. Preserve signature, Javadoc, backwards compatibility, and binary/source stability. Reason: Public interface for capturing instant JVM & OS resource utilization snapshots
+- `nanometer.trace.W3CTraceContext`: Public API surface. Preserve signature, Javadoc, backwards compatibility, and binary/source stability. Reason: Public interface for W3C distributed tracing context
 
 ## MEMORY ALLOCATION BUDGETS
 The following elements have strict heap allocation, autoboxing, or garbage budgets. Optimize allocations carefully:
@@ -127,16 +149,24 @@ The following elements emit metrics, traces, or log statements watched by dashbo
 The following elements are well-tested core components. Make changes with extreme caution:
 
 - `nanometer.storage.MetricDatabaseFlusher`: Sensitivity: High. Note: Background worker managing WAL mode SQLite transaction batches
+- `nanometer.storage.MetricQueryService`: Sensitivity: High. Note: Read-only SQLite analytics query service and canned report engine
 
 ## THREAD-SAFE BY DESIGN
 These elements are thread-safe by design — preserve the synchronization invariant on every change:
 
 - `nanometer.storage.MetricDatabaseFlusher`: Strategy: SYNCHRONIZED. Note: Thread-safe batch draining with single-thread scheduler
+- `nanometer.storage.MetricQueryService`: Strategy: SYNCHRONIZED. Note: Thread-safe JDBC connection handling
 
 ## OBSERVABILITY INSTRUMENTATION
 The following elements emit metrics, traces, or log statements watched by dashboards. Preserve every instrumentation point:
 
-- `nanometer.storage.MetricDatabaseFlusher`: Metrics: db_batch_drain_count, db_write_latency_ms.
+- `nanometer.storage.MetricDatabaseFlusher`: Metrics: db_batch_drain_count, db_write_latency_ms. 
+- `nanometer.storage.MetricQueryService`: Metrics: sql_queries_executed_total, sql_query_duration_ms. 
+
+## PUBLIC API SURFACE PROTECTION
+Preserve public signatures, Javadoc, and backwards compatibility:
+
+- `nanometer.storage.MetricQueryService`: Public API surface. Preserve signature, Javadoc, backwards compatibility, and binary/source stability. Reason: Public interface for querying SQLite telemetry metrics database
 <!-- VIBETAGS-MODULE-END: nanometer-storage -->
 <!-- VIBETAGS-MODULE: nanometer-visualizer -->
 # GEMINI AI INSTRUCTIONS
@@ -146,7 +176,7 @@ The following elements emit metrics, traces, or log statements watched by dashbo
 ## CORE FUNCTIONALITY (EXTREME CAUTION)
 The following elements are well-tested core components. Make changes with extreme caution:
 
-- `nanometer.server.NanometerVisualizerServer`: Sensitivity: High. Note: Embedded zero-dependency HTTP visualizer server with charts and topology
+- `nanometer.server.NanometerVisualizerServer`: Sensitivity: High. Note: Embedded zero-dependency HTTP visualizer server with analytics and flamegraphs
 
 ## THREAD-SAFE BY DESIGN
 These elements are thread-safe by design — preserve the synchronization invariant on every change:
@@ -161,6 +191,6 @@ The following elements emit metrics, traces, or log statements watched by dashbo
 ## PUBLIC API SURFACE PROTECTION
 Preserve public signatures, Javadoc, and backwards compatibility:
 
-- `nanometer.server.NanometerVisualizerServer`: Public API surface. Preserve signature, Javadoc, backwards compatibility, and binary/source stability. Reason: Embedded APM server dashboard lifecycle
+- `nanometer.server.NanometerVisualizerServer`: Public API surface. Preserve signature, Javadoc, backwards compatibility, and binary/source stability. Reason: Embedded APM server dashboard lifecycle and REST analytics APIs
 <!-- VIBETAGS-MODULE-END: nanometer-visualizer -->
 <!-- VIBETAGS-END -->

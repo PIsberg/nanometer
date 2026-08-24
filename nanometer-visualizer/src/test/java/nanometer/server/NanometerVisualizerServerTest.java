@@ -1,7 +1,10 @@
 package nanometer.server;
 
+import nanometer.anomaly.AnomalyDetector;
 import nanometer.graph.GraphMetricAggregator;
 import nanometer.model.RelationalMetricEvent;
+import nanometer.profiling.JfrProfileSampler;
+import nanometer.sampling.AdaptiveSampler;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -23,7 +26,15 @@ public class NanometerVisualizerServerTest {
     @BeforeEach
     public void setup() {
         aggregator = new GraphMetricAggregator();
-        server = new NanometerVisualizerServer(PORT, aggregator, null);
+        server = new NanometerVisualizerServer(
+                PORT,
+                aggregator,
+                null,
+                null,
+                new AnomalyDetector(),
+                new JfrProfileSampler(),
+                new AdaptiveSampler()
+        );
         server.start();
         client = HttpClient.newHttpClient();
     }
@@ -80,6 +91,63 @@ public class NanometerVisualizerServerTest {
     }
 
     @Test
+    public void testNewFeatureEndpoints() throws Exception {
+        // 1. Flamegraph
+        HttpResponse<String> flameRes = client.send(
+                HttpRequest.newBuilder().uri(URI.create("http://localhost:" + PORT + "/api/flamegraph")).GET().build(),
+                HttpResponse.BodyHandlers.ofString()
+        );
+        assertEquals(200, flameRes.statusCode());
+        assertTrue(flameRes.body().contains("root"));
+
+        // 2. Anomalies
+        HttpResponse<String> anomRes = client.send(
+                HttpRequest.newBuilder().uri(URI.create("http://localhost:" + PORT + "/api/anomalies")).GET().build(),
+                HttpResponse.BodyHandlers.ofString()
+        );
+        assertEquals(200, anomRes.statusCode());
+
+        // 3. RCA
+        HttpResponse<String> rcaRes = client.send(
+                HttpRequest.newBuilder().uri(URI.create("http://localhost:" + PORT + "/api/rca")).GET().build(),
+                HttpResponse.BodyHandlers.ofString()
+        );
+        assertEquals(200, rcaRes.statusCode());
+        assertTrue(rcaRes.body().contains("findings"));
+
+        // 4. Control (GET & POST)
+        HttpResponse<String> ctrlGet = client.send(
+                HttpRequest.newBuilder().uri(URI.create("http://localhost:" + PORT + "/api/control")).GET().build(),
+                HttpResponse.BodyHandlers.ofString()
+        );
+        assertEquals(200, ctrlGet.statusCode());
+        assertTrue(ctrlGet.body().contains("sampleRate"));
+
+        HttpResponse<String> ctrlPost = client.send(
+                HttpRequest.newBuilder().uri(URI.create("http://localhost:" + PORT + "/api/control"))
+                        .POST(HttpRequest.BodyPublishers.ofString("rate=0.5&tail=true")).build(),
+                HttpResponse.BodyHandlers.ofString()
+        );
+        assertEquals(200, ctrlPost.statusCode());
+
+        // 5. OTLP
+        HttpResponse<String> otlpRes = client.send(
+                HttpRequest.newBuilder().uri(URI.create("http://localhost:" + PORT + "/api/otlp")).GET().build(),
+                HttpResponse.BodyHandlers.ofString()
+        );
+        assertEquals(200, otlpRes.statusCode());
+        assertTrue(otlpRes.body().contains("resourceSpans"));
+
+        // 6. SQL (503 when queryService is null)
+        HttpResponse<String> sqlRes = client.send(
+                HttpRequest.newBuilder().uri(URI.create("http://localhost:" + PORT + "/api/sql"))
+                        .POST(HttpRequest.BodyPublishers.ofString("SELECT 1;")).build(),
+                HttpResponse.BodyHandlers.ofString()
+        );
+        assertEquals(503, sqlRes.statusCode());
+    }
+
+    @Test
     public void testNotFoundAndMethodNotAllowed() throws Exception {
         // 404 Not Found
         HttpRequest req404 = HttpRequest.newBuilder()
@@ -111,12 +179,8 @@ public class NanometerVisualizerServerTest {
 
     @Test
     public void testDoubleStartAndStop() {
-        // Double start should be a no-op
         server.start();
-
-        // Stop
         server.stop();
-        // Double stop should be a no-op
         server.stop();
     }
 }

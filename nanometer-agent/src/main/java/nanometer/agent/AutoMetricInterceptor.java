@@ -2,6 +2,9 @@ package nanometer.agent;
 
 import nanometer.buffer.MetricRingBuffer;
 import nanometer.model.RelationalMetricEvent;
+import nanometer.profiling.JfrProfileSampler;
+import nanometer.sampling.AdaptiveSampler;
+import nanometer.trace.W3CTraceContext;
 import net.bytebuddy.implementation.bind.annotation.Origin;
 import net.bytebuddy.implementation.bind.annotation.RuntimeType;
 import net.bytebuddy.implementation.bind.annotation.SuperCall;
@@ -25,6 +28,8 @@ public class AutoMetricInterceptor {
     private static final ThreadLocal<@Nullable Long> CURRENT_SPAN_ID = new ThreadLocal<>();
 
     private static volatile MetricRingBuffer buffer = MetricRingBuffer.createDefault();
+    private static volatile AdaptiveSampler sampler = new AdaptiveSampler();
+    private static volatile JfrProfileSampler profileSampler = new JfrProfileSampler();
 
     public static void setBuffer(MetricRingBuffer ringBuffer) {
         buffer = ringBuffer;
@@ -32,6 +37,22 @@ public class AutoMetricInterceptor {
 
     public static MetricRingBuffer getBuffer() {
         return buffer;
+    }
+
+    public static void setSampler(AdaptiveSampler adaptiveSampler) {
+        sampler = adaptiveSampler;
+    }
+
+    public static AdaptiveSampler getSampler() {
+        return sampler;
+    }
+
+    public static void setProfileSampler(JfrProfileSampler profiler) {
+        profileSampler = profiler;
+    }
+
+    public static JfrProfileSampler getProfileSampler() {
+        return profileSampler;
     }
 
     @RuntimeType
@@ -69,17 +90,24 @@ public class AutoMetricInterceptor {
                 CURRENT_SPAN_ID.set(parentSpanId);
             }
 
-            // Offer to non-blocking ring buffer
-            buffer.offer(new RelationalMetricEvent(
-                    traceId,
-                    parentSpanId,
-                    currentSpanId,
-                    className,
-                    methodName,
-                    durationNs,
-                    exceptionType,
-                    timestamp
-            ));
+            // On-demand profiling if slow
+            if (durationNs >= 50_000_000L) {
+                profileSampler.recordStackTrace(Thread.currentThread().getStackTrace(), durationNs);
+            }
+
+            // Adaptive tail sampling check
+            if (sampler.shouldSample(durationNs, exceptionType)) {
+                buffer.offer(new RelationalMetricEvent(
+                        traceId,
+                        parentSpanId,
+                        currentSpanId,
+                        className,
+                        methodName,
+                        durationNs,
+                        exceptionType,
+                        timestamp
+                ));
+            }
         }
     }
 }
