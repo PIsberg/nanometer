@@ -1,21 +1,21 @@
 ---
-paths: ["**/NanometerVisualizerServer.java"]
+paths: ["**/AdaptiveSampler.java"]
 ---
 
 <!-- VIBETAGS-START -->
-# Rules for NanometerVisualizerServer
+# Rules for AdaptiveSampler
 
 ## Core Functionality
 - **Sensitivity**: High
-- **Note**: Embedded zero-dependency HTTP visualizer server with analytics and flamegraphs
+- **Note**: Adaptive tail sampler and dynamic package filter controller
 
 ## Thread-Safety Guarantee
-- **Strategy**: SYNCHRONIZED
-- **Note**: Thread-safe server lifecycle management
+- **Strategy**: LOCK_FREE
+- **Note**: Thread-safe atomic sampling and concurrent package sets
 
 ## Observability Instrumentation
 - **Rule**: Do not remove or rename instrumentation without flagging the affected dashboard.
-- **Details**: Metrics: http_requests_total. 
+- **Details**: Metrics: sampled_events_ratio, active_package_filters_count. 
 
 ## Public API Surface Protection
 - **Rule**: Exposes public API. Preserve signature, Javadoc, and behavior without breaking backwards or source compatibility.

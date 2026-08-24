@@ -54,7 +54,17 @@ public class NanometerArchitectureTest {
     @Test
     public void recordsShouldBeInModelPackage() {
         ArchRule rule = classes().that().areRecords()
-                .should().resideInAnyPackage("nanometer.model..", "nanometer.graph..", "nanometer.discovery..", "nanometer.system..");
+                .should().resideInAnyPackage(
+                        "nanometer.model..",
+                        "nanometer.graph..",
+                        "nanometer.discovery..",
+                        "nanometer.system..",
+                        "nanometer.trace..",
+                        "nanometer.anomaly..",
+                        "nanometer.profiling..",
+                        "nanometer.sampling..",
+                        "nanometer.storage.."
+                );
         rule.check(importedClasses);
     }
 }

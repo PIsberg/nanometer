@@ -3,9 +3,15 @@ package nanometer.server;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
+import nanometer.anomaly.AnomalyDetector;
+import nanometer.anomaly.RootCauseAnalyzer;
 import nanometer.discovery.GraphAutoDiscoveryEngine;
+import nanometer.export.OtlpJsonExporter;
 import nanometer.graph.GraphMetricAggregator;
+import nanometer.profiling.JfrProfileSampler;
+import nanometer.sampling.AdaptiveSampler;
 import nanometer.storage.MetricDatabaseFlusher;
+import nanometer.storage.MetricQueryService;
 import nanometer.system.SystemMetricsSampler;
 import org.jspecify.annotations.Nullable;
 import se.deversity.vibetags.annotations.AICore;
@@ -13,16 +19,19 @@ import se.deversity.vibetags.annotations.AIObservability;
 import se.deversity.vibetags.annotations.AIPublicAPI;
 import se.deversity.vibetags.annotations.AIThreadSafe;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 /**
- * Lightweight embedded visualizer server providing real-time APM telemetry, topology graphs, and system metrics.
+ * Lightweight embedded visualizer server providing real-time APM telemetry, flamegraphs, SQL analytics, and root cause analysis.
  */
-@AICore(sensitivity = "High", note = "Embedded zero-dependency HTTP visualizer server with charts and topology")
-@AIPublicAPI(reason = "Embedded APM server dashboard lifecycle")
+@AICore(sensitivity = "High", note = "Embedded zero-dependency HTTP visualizer server with analytics and flamegraphs")
+@AIPublicAPI(reason = "Embedded APM server dashboard lifecycle and REST analytics APIs")
 @AIObservability(metrics = {"http_requests_total"}, traces = {})
 @AIThreadSafe(strategy = AIThreadSafe.Strategy.SYNCHRONIZED, note = "Thread-safe server lifecycle management")
 public class NanometerVisualizerServer {
@@ -30,12 +39,32 @@ public class NanometerVisualizerServer {
     private final int port;
     private final GraphMetricAggregator aggregator;
     private final @Nullable MetricDatabaseFlusher flusher;
+    private final @Nullable MetricQueryService queryService;
+    private final AnomalyDetector anomalyDetector;
+    private final JfrProfileSampler profileSampler;
+    private final AdaptiveSampler adaptiveSampler;
     private @Nullable HttpServer server;
 
     public NanometerVisualizerServer(int port, GraphMetricAggregator aggregator, @Nullable MetricDatabaseFlusher flusher) {
+        this(port, aggregator, flusher, null, null, null, null);
+    }
+
+    public NanometerVisualizerServer(
+            int port,
+            GraphMetricAggregator aggregator,
+            @Nullable MetricDatabaseFlusher flusher,
+            @Nullable MetricQueryService queryService,
+            @Nullable AnomalyDetector anomalyDetector,
+            @Nullable JfrProfileSampler profileSampler,
+            @Nullable AdaptiveSampler adaptiveSampler
+    ) {
         this.port = port;
         this.aggregator = aggregator;
         this.flusher = flusher;
+        this.queryService = queryService;
+        this.anomalyDetector = anomalyDetector != null ? anomalyDetector : new AnomalyDetector();
+        this.profileSampler = profileSampler != null ? profileSampler : new JfrProfileSampler();
+        this.adaptiveSampler = adaptiveSampler != null ? adaptiveSampler : new AdaptiveSampler();
     }
 
     public synchronized void start() {
@@ -47,6 +76,12 @@ public class NanometerVisualizerServer {
             s.createContext("/", new DashboardHandler());
             s.createContext("/api/graph", new ApiGraphHandler());
             s.createContext("/api/system", new ApiSystemHandler());
+            s.createContext("/api/flamegraph", new ApiFlamegraphHandler());
+            s.createContext("/api/anomalies", new ApiAnomaliesHandler());
+            s.createContext("/api/rca", new ApiRcaHandler());
+            s.createContext("/api/sql", new ApiSqlHandler());
+            s.createContext("/api/control", new ApiControlHandler());
+            s.createContext("/api/otlp", new ApiOtlpHandler());
             s.setExecutor(null);
             s.start();
             this.server = s;
@@ -74,13 +109,7 @@ public class NanometerVisualizerServer {
                 flusher.flushBatch();
             }
             String json = GraphAutoDiscoveryEngine.generateGraphJson(aggregator);
-            byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
-            exchange.getResponseHeaders().set("Content-Type", "application/json; charset=UTF-8");
-            exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
-            exchange.sendResponseHeaders(200, bytes.length);
-            try (OutputStream os = exchange.getResponseBody()) {
-                os.write(bytes);
-            }
+            sendJsonResponse(exchange, 200, json);
         }
     }
 
@@ -92,13 +121,129 @@ public class NanometerVisualizerServer {
                 return;
             }
             String json = SystemMetricsSampler.captureSnapshot().toJson();
-            byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
-            exchange.getResponseHeaders().set("Content-Type", "application/json; charset=UTF-8");
-            exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
-            exchange.sendResponseHeaders(200, bytes.length);
-            try (OutputStream os = exchange.getResponseBody()) {
-                os.write(bytes);
+            sendJsonResponse(exchange, 200, json);
+        }
+    }
+
+    private class ApiFlamegraphHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                exchange.sendResponseHeaders(405, -1);
+                return;
             }
+            String json = profileSampler.generateFlamegraphJson();
+            sendJsonResponse(exchange, 200, json);
+        }
+    }
+
+    private class ApiAnomaliesHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                exchange.sendResponseHeaders(405, -1);
+                return;
+            }
+            String json = anomalyDetector.getAnomaliesJson();
+            sendJsonResponse(exchange, 200, json);
+        }
+    }
+
+    private class ApiRcaHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                exchange.sendResponseHeaders(405, -1);
+                return;
+            }
+            var findings = RootCauseAnalyzer.analyze(aggregator);
+            StringBuilder sb = new StringBuilder();
+            sb.append("{\"findings\":[");
+            List<String> list = findings.stream().map(RootCauseAnalyzer.RootCauseFinding::toJson).toList();
+            sb.append(String.join(",", list));
+            sb.append("],\"markdown\":");
+            String md = RootCauseAnalyzer.generateMarkdownDiagnosis(aggregator);
+            sb.append("\"").append(escapeJson(md)).append("\"}");
+            sendJsonResponse(exchange, 200, sb.toString());
+        }
+    }
+
+    private class ApiSqlHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                exchange.sendResponseHeaders(405, -1);
+                return;
+            }
+            String sql = readBody(exchange);
+            if (queryService == null) {
+                sendJsonResponse(exchange, 503, "{\"error\":\"SQLite query service not initialized or database offline\"}");
+                return;
+            }
+            var res = queryService.executeQuery(sql);
+            sendJsonResponse(exchange, 200, res.toJson());
+        }
+    }
+
+    private class ApiControlHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendJsonResponse(exchange, 200, adaptiveSampler.toJson());
+                return;
+            }
+            if ("POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                String body = readBody(exchange);
+                // Simple parser for key=value or rate=0.5
+                if (body.contains("rate=")) {
+                    try {
+                        String val = body.split("rate=")[1].split("[&\\s]")[0];
+                        adaptiveSampler.setSampleRate(Double.parseDouble(val));
+                    } catch (Exception ignored) {}
+                }
+                if (body.contains("tail=")) {
+                    try {
+                        String val = body.split("tail=")[1].split("[&\\s]")[0];
+                        adaptiveSampler.setTailSamplingEnabled(Boolean.parseBoolean(val));
+                    } catch (Exception ignored) {}
+                }
+                sendJsonResponse(exchange, 200, adaptiveSampler.toJson());
+                return;
+            }
+            exchange.sendResponseHeaders(405, -1);
+        }
+    }
+
+    private class ApiOtlpHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                exchange.sendResponseHeaders(405, -1);
+                return;
+            }
+            String json = OtlpJsonExporter.exportToJson("nanometer-service", List.of());
+            sendJsonResponse(exchange, 200, json);
+        }
+    }
+
+    private static void sendJsonResponse(HttpExchange exchange, int statusCode, String body) throws IOException {
+        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().set("Content-Type", "application/json; charset=UTF-8");
+        exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+        exchange.sendResponseHeaders(statusCode, bytes.length);
+        try (OutputStream os = exchange.getResponseBody()) {
+            os.write(bytes);
+        }
+    }
+
+    private static String readBody(HttpExchange exchange) throws IOException {
+        try (InputStream is = exchange.getRequestBody(); ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
+            byte[] buf = new byte[1024];
+            int r;
+            while ((r = is.read(buf)) != -1) {
+                bos.write(buf, 0, r);
+            }
+            return bos.toString(StandardCharsets.UTF_8);
         }
     }
 
@@ -114,26 +259,31 @@ public class NanometerVisualizerServer {
                 <html lang="en">
                 <head>
                     <meta charset="UTF-8">
-                    <title>⚡ Nanometer: Embedded APM & Multi-Round Topology Visualizer</title>
+                    <title>⚡ Nanometer: Embedded APM, Flamegraphs & SQL Analytics</title>
                     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
                     <style>
                         * { box-sizing: border-box; }
                         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #070b14; color: #f1f5f9; margin: 0; padding: 18px; }
-                        header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1e293b; padding-bottom: 14px; margin-bottom: 16px; }
+                        header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1e293b; padding-bottom: 14px; margin-bottom: 14px; }
                         h1 { margin: 0; font-size: 20px; color: #38bdf8; display: flex; align-items: center; gap: 8px; }
                         .header-controls { display: flex; align-items: center; gap: 12px; }
                         .badge { background: #0284c7; color: white; padding: 4px 10px; border-radius: 9999px; font-size: 11px; font-weight: bold; }
                         
-                        /* Multi-round toolbar */
-                        .toolbar { background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; }
+                        /* Tabs */
+                        .nav-tabs { display: flex; gap: 8px; margin-bottom: 14px; border-bottom: 1px solid #1e293b; padding-bottom: 8px; }
+                        .tab-btn { background: #0f172a; border: 1px solid #1e293b; color: #94a3b8; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; }
+                        .tab-btn.active { background: #0284c7; color: white; border-color: #0284c7; }
+
+                        /* Toolbar */
+                        .toolbar { background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; }
                         .tool-group { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #94a3b8; }
-                        select, input[type="text"], button { background: #1e293b; border: 1px solid #334155; color: #f8fafc; border-radius: 6px; padding: 5px 10px; font-size: 12px; outline: none; }
-                        button { cursor: pointer; font-weight: 600; background: #0284c7; border-color: #0284c7; transition: opacity 0.2s; }
+                        select, input[type="text"], textarea, button { background: #1e293b; border: 1px solid #334155; color: #f8fafc; border-radius: 6px; padding: 5px 10px; font-size: 12px; outline: none; }
+                        button { cursor: pointer; font-weight: 600; background: #0284c7; border-color: #0284c7; }
                         button:hover { opacity: 0.9; }
                         button.secondary { background: #334155; border-color: #475569; }
                         
                         /* KPIs */
-                        .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 16px; }
+                        .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 14px; }
                         .kpi-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 12px; }
                         .kpi-title { font-size: 10px; text-transform: uppercase; color: #94a3b8; font-weight: 600; margin-bottom: 4px; }
                         .kpi-val { font-size: 18px; font-weight: 700; color: #38bdf8; }
@@ -143,178 +293,298 @@ public class NanometerVisualizerServer {
                         .progress-fill.warn { background: #f59e0b; }
                         .progress-fill.danger { background: #ef4444; }
 
-                        /* Layout grids */
+                        /* Grids */
                         .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
                         @media (max-width: 1100px) { .grid-2 { grid-template-columns: 1fr; } }
                         
                         .card { background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 14px; box-shadow: 0 4px 10px rgba(0,0,0,0.3); }
                         .card h2 { font-size: 14px; margin-top: 0; color: #cbd5e1; border-bottom: 1px solid #1e293b; padding-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
                         
-                        /* Canvas Container for Massive Topologies */
                         #canvas-container { position: relative; width: 100%; height: 420px; background: #020617; border-radius: 6px; overflow: hidden; border: 1px solid #1e293b; }
                         canvas#topology-canvas { width: 100%; height: 100%; display: block; cursor: grab; }
-                        canvas#topology-canvas:active { cursor: grabbing; }
                         .canvas-overlay { position: absolute; top: 10px; right: 10px; display: flex; gap: 6px; }
                         .canvas-overlay button { padding: 4px 8px; font-size: 11px; }
 
-                        /* Tables & Charts */
                         table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 12px; }
                         th, td { padding: 6px 8px; text-align: left; border-bottom: 1px solid #1e293b; }
                         th { color: #94a3b8; font-weight: 600; position: sticky; top: 0; background: #0f172a; }
                         .err { color: #f87171; font-weight: bold; }
                         .chart-box { position: relative; height: 220px; width: 100%; }
 
-                        /* Node Inspector Drawer */
-                        #node-inspector { display: none; margin-top: 10px; padding: 10px; background: #1e293b; border-radius: 6px; font-size: 12px; }
+                        /* Flamegraph & SQL View */
+                        .tab-content { display: none; }
+                        .tab-content.active { display: block; }
+                        .flame-row { display: flex; flex-direction: column; gap: 4px; padding: 10px; background: #020617; border-radius: 6px; max-height: 400px; overflow-y: auto; }
+                        .flame-bar { background: linear-gradient(90deg, #f59e0b, #ef4444); color: #000; font-weight: bold; font-size: 10px; padding: 4px 8px; border-radius: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px; }
                     </style>
                 </head>
                 <body>
                     <header>
                         <div>
                             <h1>⚡ Nanometer Embedded APM</h1>
-                            <div style="font-size: 11px; color: #94a3b8; margin-top: 2px;">Zero-Boilerplate Runtime Observability & Massive Topology Inference</div>
+                            <div style="font-size: 11px; color: #94a3b8; margin-top: 2px;">Zero-Boilerplate Runtime Observability, Flamegraphs & Automated RCA</div>
                         </div>
                         <div class="header-controls">
                             <span class="badge" id="live-indicator">🔴 LIVE STREAMING (WAL)</span>
                         </div>
                     </header>
 
-                    <!-- Multi-Round & Scalability Controls -->
-                    <div class="toolbar">
-                        <div class="tool-group">
-                            <span><strong>Round:</strong></span>
-                            <select id="round-select" onchange="onRoundChange()">
-                                <option value="live">🔴 Live Telemetry</option>
-                            </select>
-                            <button onclick="captureRoundSnapshot()">📸 Snapshot Round</button>
-                            <button class="secondary" onclick="clearRoundData()">🔄 Reset Telemetry</button>
-                        </div>
-                        <div class="tool-group">
-                            <span><strong>Filter:</strong></span>
-                            <input type="text" id="node-search" placeholder="Search method / class..." oninput="onFilterChange()" style="width:160px">
-                            <label><input type="checkbox" id="errors-only" onchange="onFilterChange()"> Errors Only</label>
-                            <label><input type="checkbox" id="cluster-pkg" onchange="onClusterToggle()"> Group by Package</label>
-                            <span>Min Calls:</span>
-                            <select id="min-calls-filter" onchange="onFilterChange()">
-                                <option value="0">0+</option>
-                                <option value="5">5+</option>
-                                <option value="20">20+</option>
-                                <option value="50">50+</option>
-                            </select>
-                        </div>
+                    <!-- Navigation Tabs -->
+                    <div class="nav-tabs">
+                        <button class="tab-btn active" onclick="switchTab('tab-topology')">🌐 Topology & Metrics</button>
+                        <button class="tab-btn" onclick="switchTab('tab-flamegraph')">🔥 JFR Flamegraphs</button>
+                        <button class="tab-btn" onclick="switchTab('tab-rca')">🚨 Anomaly & Root Cause Analysis</button>
+                        <button class="tab-btn" onclick="switchTab('tab-sql')">💾 SQLite SQL Console</button>
+                        <button class="tab-btn" onclick="switchTab('tab-sampling')">⚙️ Runtime Control</button>
                     </div>
 
-                    <!-- System & JVM Telemetry Gauges -->
-                    <div class="kpi-grid">
-                        <div class="kpi-card">
-                            <div class="kpi-title">Process CPU</div>
-                            <div class="kpi-val" id="kpi-cpu-proc">0.0%</div>
-                            <div class="progress-bar"><div class="progress-fill" id="kpi-cpu-proc-fill"></div></div>
-                            <div class="kpi-sub" id="kpi-cpu-sys">System CPU: 0.0%</div>
+                    <!-- TAB 1: TOPOLOGY & TELEMETRY -->
+                    <div id="tab-topology" class="tab-content active">
+                        <div class="toolbar">
+                            <div class="tool-group">
+                                <span><strong>Round:</strong></span>
+                                <select id="round-select" onchange="onRoundChange()"><option value="live">🔴 Live Telemetry</option></select>
+                                <button onclick="captureRoundSnapshot()">📸 Snapshot Round</button>
+                                <button class="secondary" onclick="clearRoundData()">🔄 Reset</button>
+                            </div>
+                            <div class="tool-group">
+                                <span><strong>Filter:</strong></span>
+                                <input type="text" id="node-search" placeholder="Search method..." oninput="onFilterChange()" style="width:140px">
+                                <label><input type="checkbox" id="errors-only" onchange="onFilterChange()"> Errors Only</label>
+                                <label><input type="checkbox" id="cluster-pkg" onchange="onClusterToggle()"> Group by Package</label>
+                            </div>
                         </div>
-                        <div class="kpi-card">
-                            <div class="kpi-title">JVM Heap Memory</div>
-                            <div class="kpi-val" id="kpi-heap-used">0 MB</div>
-                            <div class="progress-bar"><div class="progress-fill" id="kpi-heap-fill"></div></div>
-                            <div class="kpi-sub" id="kpi-heap-max">Max: 0 MB</div>
-                        </div>
-                        <div class="kpi-card">
-                            <div class="kpi-title">Non-Heap Memory</div>
-                            <div class="kpi-val" id="kpi-non-heap">0 MB</div>
-                            <div class="kpi-sub">Metaspace / Native</div>
-                        </div>
-                        <div class="kpi-card">
-                            <div class="kpi-title">Active Threads</div>
-                            <div class="kpi-val" id="kpi-threads">0</div>
-                            <div class="kpi-sub" id="kpi-procs">0 Processors</div>
-                        </div>
-                        <div class="kpi-card">
-                            <div class="kpi-title">Runtime Uptime</div>
-                            <div class="kpi-val" id="kpi-uptime">0s</div>
-                            <div class="kpi-sub" id="kpi-nodes-count">0 Nodes, 0 Edges</div>
-                        </div>
-                    </div>
 
-                    <!-- Topology DAG Canvas & System Charts -->
-                    <div class="grid-2">
-                        <div class="card">
-                            <h2>
-                                <span>🌐 Method Topology DAG & Failure Paths</span>
-                                <small style="font-size:11px;color:#64748b" id="cluster-label">Auto-Discovered Hierarchy</small>
-                            </h2>
-                            <div id="canvas-container">
-                                <canvas id="topology-canvas"></canvas>
-                                <div class="canvas-overlay">
-                                    <button class="secondary" onclick="zoomIn()">➕</button>
-                                    <button class="secondary" onclick="zoomOut()">➖</button>
-                                    <button class="secondary" onclick="resetZoom()">Fit</button>
+                        <div class="kpi-grid">
+                            <div class="kpi-card">
+                                <div class="kpi-title">Process CPU</div>
+                                <div class="kpi-val" id="kpi-cpu-proc">0.0%</div>
+                                <div class="progress-bar"><div class="progress-fill" id="kpi-cpu-proc-fill"></div></div>
+                                <div class="kpi-sub" id="kpi-cpu-sys">System CPU: 0.0%</div>
+                            </div>
+                            <div class="kpi-card">
+                                <div class="kpi-title">JVM Heap Memory</div>
+                                <div class="kpi-val" id="kpi-heap-used">0 MB</div>
+                                <div class="progress-bar"><div class="progress-fill" id="kpi-heap-fill"></div></div>
+                                <div class="kpi-sub" id="kpi-heap-max">Max: 0 MB</div>
+                            </div>
+                            <div class="kpi-card">
+                                <div class="kpi-title">Non-Heap Memory</div>
+                                <div class="kpi-val" id="kpi-non-heap">0 MB</div>
+                                <div class="kpi-sub">Metaspace / Native</div>
+                            </div>
+                            <div class="kpi-card">
+                                <div class="kpi-title">Active Threads</div>
+                                <div class="kpi-val" id="kpi-threads">0</div>
+                                <div class="kpi-sub" id="kpi-procs">0 Processors</div>
+                            </div>
+                            <div class="kpi-card">
+                                <div class="kpi-title">Runtime Uptime</div>
+                                <div class="kpi-val" id="kpi-uptime">0s</div>
+                                <div class="kpi-sub" id="kpi-nodes-count">0 Nodes, 0 Edges</div>
+                            </div>
+                        </div>
+
+                        <div class="grid-2">
+                            <div class="card">
+                                <h2>
+                                    <span>🌐 Method Topology DAG & Failure Paths</span>
+                                    <small style="font-size:11px;color:#64748b" id="cluster-label">Auto-Discovered Hierarchy</small>
+                                </h2>
+                                <div id="canvas-container">
+                                    <canvas id="topology-canvas"></canvas>
+                                    <div class="canvas-overlay">
+                                        <button class="secondary" onclick="zoomIn()">➕</button>
+                                        <button class="secondary" onclick="zoomOut()">➖</button>
+                                        <button class="secondary" onclick="resetZoom()">Fit</button>
+                                    </div>
                                 </div>
                             </div>
-                            <div id="node-inspector">
-                                <strong>Node Inspector:</strong> <span id="insp-name" style="color:#38bdf8"></span> | 
-                                Calls: <span id="insp-calls"></span> | Errors: <span id="insp-errors" class="err"></span> | 
-                                P95: <span id="insp-p95"></span>
+                            <div class="card">
+                                <h2>
+                                    <span>📈 System CPU & Heap Memory Trend</span>
+                                    <small style="font-size:11px;color:#64748b">Rolling 30s Time-Series</small>
+                                </h2>
+                                <div class="chart-box">
+                                    <canvas id="system-chart"></canvas>
+                                </div>
                             </div>
                         </div>
-                        <div class="card">
-                            <h2>
-                                <span>📈 System CPU & Heap Memory Trend</span>
-                                <small style="font-size:11px;color:#64748b">Rolling 30s Time-Series</small>
-                            </h2>
-                            <div class="chart-box">
-                                <canvas id="system-chart"></canvas>
+
+                        <div class="grid-2">
+                            <div class="card">
+                                <h2><span>📊 Top Slowest Methods (p95 Latency)</span></h2>
+                                <div class="chart-box"><canvas id="latency-chart"></canvas></div>
+                            </div>
+                            <div class="card">
+                                <h2><span>📋 Method Telemetry Grid</span></h2>
+                                <div style="max-height: 220px; overflow-y: auto;">
+                                    <table id="methods-table"><thead><tr><th>Method</th><th>Calls</th><th>Errors</th><th>p95</th><th>Avg</th></tr></thead><tbody></tbody></table>
+                                </div>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Latency Breakdown Chart & Method Telemetry Table -->
-                    <div class="grid-2">
+                    <!-- TAB 2: FLAMEGRAPHS -->
+                    <div id="tab-flamegraph" class="tab-content">
                         <div class="card">
                             <h2>
-                                <span>📊 Top Slowest Methods (p95 Latency)</span>
-                                <small style="font-size:11px;color:#64748b">Milliseconds</small>
+                                <span>🔥 Execution Call-Tree Flamegraph</span>
+                                <button onclick="fetchFlamegraph()">🔄 Refresh Tree</button>
                             </h2>
-                            <div class="chart-box">
-                                <canvas id="latency-chart"></canvas>
+                            <div class="flame-row" id="flamegraph-container">
+                                <div style="color:#64748b;padding:20px;text-align:center">Click 'Refresh Tree' to pull active stack frame profiles...</div>
                             </div>
                         </div>
+                    </div>
+
+                    <!-- TAB 3: ANOMALY & ROOT CAUSE ANALYSIS -->
+                    <div id="tab-rca" class="tab-content">
+                        <div class="grid-2">
+                            <div class="card">
+                                <h2><span>🚨 Automated Root Cause Explainer</span></h2>
+                                <div id="rca-output" style="font-size:13px;line-height:1.6;color:#cbd5e1">Loading diagnosis...</div>
+                            </div>
+                            <div class="card">
+                                <h2><span>📈 Statistical Outliers (3-Sigma Anomalies)</span></h2>
+                                <div style="max-height:300px;overflow-y:auto">
+                                    <table id="anomalies-table">
+                                        <thead><tr><th>Method</th><th>Duration</th><th>Mean</th><th>Sigma</th></tr></thead>
+                                        <tbody></tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- TAB 4: SQL ANALYTICS CONSOLE -->
+                    <div id="tab-sql" class="tab-content">
                         <div class="card">
-                            <h2>
-                                <span>📋 Method Telemetry Grid</span>
-                            </h2>
-                            <div style="max-height: 220px; overflow-y: auto;">
-                                <table id="methods-table">
-                                    <thead>
-                                        <tr><th>Method</th><th>Calls</th><th>Errors</th><th>p95</th><th>Avg</th></tr>
-                                    </thead>
-                                    <tbody></tbody>
-                                </table>
+                            <h2><span>💾 SQLite Embedded Analytics Console</span></h2>
+                            <div style="margin-bottom:10px">
+                                <textarea id="sql-input" style="width:100%;height:70px;font-family:monospace">SELECT class_name, method_name, count(*) as calls, round(avg(duration_nanos)/1000000.0, 2) as avg_ms FROM metrics GROUP BY class_name, method_name ORDER BY avg_ms DESC LIMIT 10;</textarea>
+                            </div>
+                            <div style="display:flex;gap:10px;margin-bottom:14px">
+                                <button onclick="runSql()">▶ Execute Query</button>
+                                <button class="secondary" onclick="setQueryTemplate(1)">Top Slowest</button>
+                                <button class="secondary" onclick="setQueryTemplate(2)">Exception Breakdown</button>
+                                <button class="secondary" onclick="setQueryTemplate(3)">Timeline</button>
+                                <span id="sql-timing" style="font-size:12px;color:#64748b;align-self:center"></span>
+                            </div>
+                            <div style="max-height:280px;overflow-y:auto">
+                                <table id="sql-results-table"><thead></thead><tbody></tbody></table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- TAB 5: RUNTIME CONTROL -->
+                    <div id="tab-sampling" class="tab-content">
+                        <div class="card">
+                            <h2><span>⚙️ Dynamic Sampling & Package Filters</span></h2>
+                            <div style="display:flex;flex-direction:column;gap:14px;max-width:500px">
+                                <div>
+                                    <label><strong>Sample Rate:</strong> <span id="sample-rate-val">100%</span></label>
+                                    <input type="range" id="sample-rate-slider" min="0" max="1" step="0.05" value="1.0" oninput="onSampleRateChange(this.value)" style="width:100%">
+                                </div>
+                                <div>
+                                    <label><input type="checkbox" id="tail-sampling-toggle" checked onchange="onTailSamplingChange(this.checked)"> <strong>Adaptive Tail Sampling</strong> (Keep 100% of errors & slow traces)</label>
+                                </div>
                             </div>
                         </div>
                     </div>
 
                     <script>
-                        // --- Multi-Round State & History Storage ---
+                        function switchTab(tabId) {
+                            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+                            document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+                            document.getElementById(tabId).classList.add('active');
+                            event.target.classList.add('active');
+                            if (tabId === 'tab-flamegraph') fetchFlamegraph();
+                            if (tabId === 'tab-rca') fetchRca();
+                        }
+
+                        // SQL console execution
+                        async function runSql() {
+                            const query = document.getElementById('sql-input').value;
+                            const res = await fetch('/api/sql', { method: 'POST', body: query });
+                            const data = await res.json();
+                            const thead = document.querySelector('#sql-results-table thead');
+                            const tbody = document.querySelector('#sql-results-table tbody');
+                            if (data.error) {
+                                thead.innerHTML = '';
+                                tbody.innerHTML = `<tr><td style="color:#ef4444">${data.error}</td></tr>`;
+                                return;
+                            }
+                            thead.innerHTML = `<tr>${data.columns.map(c => `<th>${c}</th>`).join('')}</tr>`;
+                            tbody.innerHTML = data.rows.map(r => `<tr>${r.map(v => `<td>${v}</td>`).join('')}</tr>`).join('');
+                            document.getElementById('sql-timing').innerText = `Executed in ${data.executionTimeMs} ms (${data.rows.length} rows)`;
+                        }
+
+                        function setQueryTemplate(idx) {
+                            const q1 = "SELECT class_name, method_name, count(*) as calls, round(avg(duration_nanos)/1000000.0, 2) as avg_ms FROM metrics GROUP BY class_name, method_name ORDER BY avg_ms DESC LIMIT 10;";
+                            const q2 = "SELECT exception_type, count(*) as error_count FROM metrics WHERE exception_type != 'NONE' GROUP BY exception_type ORDER BY error_count DESC;";
+                            const q3 = "SELECT strftime('%H:%M:%S', timestamp / 1000, 'unixepoch') as sec_bucket, count(*) as calls FROM metrics GROUP BY sec_bucket ORDER BY sec_bucket DESC LIMIT 15;";
+                            document.getElementById('sql-input').value = idx === 1 ? q1 : (idx === 2 ? q2 : q3);
+                            runSql();
+                        }
+
+                        // RCA fetch
+                        async function fetchRca() {
+                            const res = await fetch('/api/rca');
+                            const data = await res.json();
+                            document.getElementById('rca-output').innerHTML = data.markdown.replace(/\\n/g, '<br>').replace(/\\|/g, ' ');
+                            
+                            const aRes = await fetch('/api/anomalies');
+                            const aData = await aRes.json();
+                            const aBody = document.querySelector('#anomalies-table tbody');
+                            aBody.innerHTML = aData.map(a => `
+                                <tr>
+                                    <td>${a.methodKey}</td>
+                                    <td>${a.observedMs.toFixed(2)} ms</td>
+                                    <td>${a.meanMs.toFixed(2)} ms</td>
+                                    <td class="err">+${a.sigma.toFixed(1)}σ</td>
+                                </tr>
+                            `).join('');
+                        }
+
+                        // Flamegraph fetch
+                        async function fetchFlamegraph() {
+                            const res = await fetch('/api/flamegraph');
+                            const tree = await res.json();
+                            const container = document.getElementById('flamegraph-container');
+                            container.innerHTML = '';
+                            function renderNode(node, depth) {
+                                if (node.name !== 'root') {
+                                    const div = document.createElement('div');
+                                    div.className = 'flame-bar';
+                                    div.style.marginLeft = (depth * 14) + 'px';
+                                    div.innerText = `${node.name} (${(node.value / 1000000).toFixed(1)} ms)`;
+                                    container.appendChild(div);
+                                }
+                                if (node.children) {
+                                    node.children.forEach(c => renderNode(c, depth + 1));
+                                }
+                            }
+                            renderNode(tree, 0);
+                        }
+
+                        async function onSampleRateChange(val) {
+                            document.getElementById('sample-rate-val').innerText = Math.round(val * 100) + '%';
+                            await fetch('/api/control', { method: 'POST', body: 'rate=' + val });
+                        }
+
+                        async function onTailSamplingChange(val) {
+                            await fetch('/api/control', { method: 'POST', body: 'tail=' + val });
+                        }
+
+                        // Topology & Charts Engine (inherited from previous version)
                         const roundsHistory = new Map();
                         let currentRound = 'live';
                         let roundCounter = 1;
-
                         const maxHistory = 25;
-                        const timeLabels = [];
-                        const cpuData = [];
-                        const heapData = [];
+                        const timeLabels = [], cpuData = [], heapData = [];
+                        let zoom = 1.0, panX = 0, panY = 0, isDragging = false, dragStartX = 0, dragStartY = 0, selectedNode = null, groupByPackage = false;
 
-                        // Canvas pan & zoom state for huge topologies
-                        let zoom = 1.0;
-                        let panX = 0;
-                        let panY = 0;
-                        let isDragging = false;
-                        let dragStartX = 0;
-                        let dragStartY = 0;
-                        let selectedNode = null;
-                        let groupByPackage = false;
-
-                        // Charts init
                         const sysCtx = document.getElementById('system-chart').getContext('2d');
                         const systemChart = new Chart(sysCtx, {
                             type: 'line',
@@ -326,9 +596,7 @@ public class NanometerVisualizerServer {
                                 ]
                             },
                             options: {
-                                responsive: true,
-                                maintainAspectRatio: false,
-                                animation: false,
+                                responsive: true, maintainAspectRatio: false, animation: false,
                                 scales: {
                                     x: { grid: { color: '#1e293b' }, ticks: { color: '#64748b', font: { size: 10 } } },
                                     yCpu: { position: 'left', min: 0, max: 100, grid: { color: '#1e293b' }, ticks: { color: '#38bdf8', callback: v => v + '%' } },
@@ -343,24 +611,15 @@ public class NanometerVisualizerServer {
                             type: 'bar',
                             data: { labels: [], datasets: [{ label: 'p95 (ms)', data: [], backgroundColor: '#38bdf8' }, { label: 'Avg (ms)', data: [], backgroundColor: '#0284c7' }] },
                             options: {
-                                responsive: true,
-                                maintainAspectRatio: false,
-                                indexAxis: 'y',
-                                scales: {
-                                    x: { grid: { color: '#1e293b' }, ticks: { color: '#94a3b8' } },
-                                    y: { grid: { color: '#1e293b' }, ticks: { color: '#cbd5e1', font: { size: 11 } } }
-                                },
+                                responsive: true, maintainAspectRatio: false, indexAxis: 'y',
+                                scales: { x: { grid: { color: '#1e293b' }, ticks: { color: '#94a3b8' } }, y: { grid: { color: '#1e293b' }, ticks: { color: '#cbd5e1', font: { size: 11 } } } },
                                 plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 12 } } }
                             }
                         });
 
-                        // Topology Canvas
                         const canvas = document.getElementById('topology-canvas');
                         const ctx = canvas.getContext('2d');
-                        let rawNodes = [];
-                        let rawEdges = [];
-                        let displayNodes = [];
-                        let displayEdges = [];
+                        let rawNodes = [], rawEdges = [], displayNodes = [], displayEdges = [];
 
                         function resizeCanvas() {
                             const rect = canvas.parentElement.getBoundingClientRect();
@@ -370,35 +629,14 @@ public class NanometerVisualizerServer {
                         window.addEventListener('resize', resizeCanvas);
                         resizeCanvas();
 
-                        // Canvas Mouse Listeners (Pan, Zoom, Click)
                         canvas.addEventListener('mousedown', e => {
                             isDragging = true;
                             dragStartX = e.clientX - panX;
                             dragStartY = e.clientY - panY;
-                            
-                            // Check node click
-                            const rect = canvas.getBoundingClientRect();
-                            const mx = (e.clientX - rect.left - panX) / zoom;
-                            const my = (e.clientY - rect.top - panY) / zoom;
-                            selectedNode = displayNodes.find(n => Math.hypot(n.x - mx, n.y - my) <= (n.radius || 18));
-                            updateInspector();
                         });
-
-                        window.addEventListener('mousemove', e => {
-                            if (isDragging) {
-                                panX = e.clientX - dragStartX;
-                                panY = e.clientY - dragStartY;
-                            }
-                        });
-
+                        window.addEventListener('mousemove', e => { if (isDragging) { panX = e.clientX - dragStartX; panY = e.clientY - dragStartY; } });
                         window.addEventListener('mouseup', () => isDragging = false);
-
-                        canvas.addEventListener('wheel', e => {
-                            e.preventDefault();
-                            const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
-                            zoom = Math.max(0.2, Math.min(4.0, zoom * zoomFactor));
-                        });
-
+                        canvas.addEventListener('wheel', e => { e.preventDefault(); zoom = Math.max(0.2, Math.min(4.0, zoom * (e.deltaY < 0 ? 1.1 : 0.9))); });
                         function zoomIn() { zoom = Math.min(4.0, zoom * 1.2); }
                         function zoomOut() { zoom = Math.max(0.2, zoom * 0.8); }
                         function resetZoom() { zoom = 1.0; panX = 0; panY = 0; }
@@ -408,38 +646,19 @@ public class NanometerVisualizerServer {
                             document.getElementById('cluster-label').innerText = groupByPackage ? 'Grouped by Package Clusters' : 'Auto-Discovered Hierarchy';
                             filterAndLayoutNodes();
                         }
-
-                        function onFilterChange() {
-                            filterAndLayoutNodes();
-                        }
-
-                        function updateInspector() {
-                            const insp = document.getElementById('node-inspector');
-                            if (!selectedNode) {
-                                insp.style.display = 'none';
-                                return;
-                            }
-                            insp.style.display = 'block';
-                            document.getElementById('insp-name').innerText = selectedNode.id;
-                            document.getElementById('insp-calls').innerText = selectedNode.calls;
-                            document.getElementById('insp-errors').innerText = selectedNode.errors;
-                            document.getElementById('insp-p95').innerText = selectedNode.p95.toFixed(2) + ' ms';
-                        }
+                        function onFilterChange() { filterAndLayoutNodes(); }
 
                         function filterAndLayoutNodes() {
                             const search = document.getElementById('node-search').value.toLowerCase();
                             const errOnly = document.getElementById('errors-only').checked;
-                            const minCalls = parseInt(document.getElementById('min-calls-filter').value, 10) || 0;
 
                             let filtered = rawNodes.filter(n => {
                                 if (search && !n.id.toLowerCase().includes(search) && !n.label.toLowerCase().includes(search)) return false;
                                 if (errOnly && n.errors === 0 && !n.isException) return false;
-                                if (n.calls < minCalls && !n.isException) return false;
                                 return true;
                             });
 
                             if (groupByPackage) {
-                                // Cluster into packages
                                 const pkgMap = new Map();
                                 filtered.forEach(n => {
                                     const pkg = n.id.includes('.') ? n.id.substring(0, n.id.lastIndexOf('.')) : n.id;
@@ -447,16 +666,13 @@ public class NanometerVisualizerServer {
                                         pkgMap.set(pkg, { id: pkg, label: pkg.split('.').pop() || pkg, calls: 0, errors: 0, p95: 0, avg: 0, isException: n.isException });
                                     }
                                     const p = pkgMap.get(pkg);
-                                    p.calls += n.calls;
-                                    p.errors += n.errors;
-                                    p.p95 = Math.max(p.p95, n.p95);
+                                    p.calls += n.calls; p.errors += n.errors; p.p95 = Math.max(p.p95, n.p95);
                                 });
                                 filtered = Array.from(pkgMap.values());
                             }
 
                             const existingMap = new Map(displayNodes.map(n => [n.id, n]));
-                            const cx = canvas.width / 2;
-                            const cy = canvas.height / 2;
+                            const cx = canvas.width / 2, cy = canvas.height / 2;
                             const radius = Math.min(canvas.width, canvas.height) * 0.38;
 
                             displayNodes = filtered.map((n, i) => {
@@ -474,7 +690,6 @@ public class NanometerVisualizerServer {
                             displayEdges = rawEdges.filter(e => nodeIds.has(e.source) && nodeIds.has(e.target));
                         }
 
-                        // Drawing loop
                         function renderCanvas() {
                             ctx.clearRect(0, 0, canvas.width, canvas.height);
                             ctx.save();
@@ -482,83 +697,30 @@ public class NanometerVisualizerServer {
                             ctx.scale(zoom, zoom);
 
                             if (displayNodes.length === 0) {
-                                ctx.fillStyle = '#64748b';
-                                ctx.font = '13px sans-serif';
-                                ctx.textAlign = 'center';
+                                ctx.fillStyle = '#64748b'; ctx.font = '13px sans-serif'; ctx.textAlign = 'center';
                                 ctx.fillText('No method nodes match current filters...', (canvas.width / 2 - panX) / zoom, (canvas.height / 2 - panY) / zoom);
                                 ctx.restore();
                                 requestAnimationFrame(renderCanvas);
                                 return;
                             }
 
-                            // Force relaxation on nodes
-                            for (let i = 0; i < displayNodes.length; i++) {
-                                for (let j = i + 1; j < displayNodes.length; j++) {
-                                    let dx = displayNodes[j].x - displayNodes[i].x;
-                                    let dy = displayNodes[j].y - displayNodes[i].y;
-                                    let dist = Math.hypot(dx, dy) || 1;
-                                    if (dist < 160) {
-                                        let force = 1200 / (dist * dist);
-                                        let fx = (dx / dist) * force;
-                                        let fy = (dy / dist) * force;
-                                        displayNodes[i].x -= fx;
-                                        displayNodes[i].y -= fy;
-                                        displayNodes[j].x += fx;
-                                        displayNodes[j].y += fy;
-                                    }
-                                }
-                            }
-
                             const map = new Map(displayNodes.map(n => [n.id, n]));
-
-                            // Draw Edges
                             displayEdges.forEach(e => {
-                                const src = map.get(e.source);
-                                const tgt = map.get(e.target);
+                                const src = map.get(e.source), tgt = map.get(e.target);
                                 if (!src || !tgt) return;
-
-                                ctx.beginPath();
-                                ctx.moveTo(src.x, src.y);
-                                ctx.lineTo(tgt.x, tgt.y);
+                                ctx.beginPath(); ctx.moveTo(src.x, src.y); ctx.lineTo(tgt.x, tgt.y);
                                 ctx.strokeStyle = e.errors > 0 ? '#ef4444' : '#0284c7';
                                 ctx.lineWidth = Math.min(5, Math.max(1.5, Math.log10(e.calls + 1)));
                                 ctx.stroke();
-
-                                // Arrow
-                                const angle = Math.atan2(tgt.y - src.y, tgt.x - src.x);
-                                const ax = tgt.x - Math.cos(angle) * (tgt.radius + 6);
-                                const ay = tgt.y - Math.sin(angle) * (tgt.radius + 6);
-                                ctx.beginPath();
-                                ctx.moveTo(ax, ay);
-                                ctx.lineTo(ax - 8 * Math.cos(angle - Math.PI / 6), ay - 8 * Math.sin(angle - Math.PI / 6));
-                                ctx.lineTo(ax - 8 * Math.cos(angle + Math.PI / 6), ay - 8 * Math.sin(angle + Math.PI / 6));
-                                ctx.fillStyle = e.errors > 0 ? '#ef4444' : '#38bdf8';
-                                ctx.fill();
                             });
 
-                            // Draw Nodes
                             displayNodes.forEach(n => {
-                                const isSel = selectedNode && selectedNode.id === n.id;
                                 const isErr = n.isException || n.errors > 0;
-                                ctx.beginPath();
-                                ctx.arc(n.x, n.y, n.radius, 0, Math.PI * 2);
+                                ctx.beginPath(); ctx.arc(n.x, n.y, n.radius, 0, Math.PI * 2);
                                 ctx.fillStyle = isErr ? '#ef4444' : (n.p95 > 25 ? '#f59e0b' : '#0284c7');
-                                ctx.fill();
-                                ctx.lineWidth = isSel ? 3 : 1.5;
-                                ctx.strokeStyle = isSel ? '#38bdf8' : '#ffffff';
-                                ctx.stroke();
-
-                                // Label
-                                ctx.fillStyle = '#f8fafc';
-                                ctx.font = (n.radius > 18 ? '12px' : '10px') + ' sans-serif';
-                                ctx.textAlign = 'center';
-                                ctx.fillText(n.label, n.x, n.y - n.radius - 6);
-
-                                if (n.calls > 0) {
-                                    ctx.fillStyle = '#94a3b8';
-                                    ctx.font = '9px sans-serif';
-                                    ctx.fillText(n.calls + ' calls', n.x, n.y + n.radius + 12);
-                                }
+                                ctx.fill(); ctx.lineWidth = 1.5; ctx.strokeStyle = '#ffffff'; ctx.stroke();
+                                ctx.fillStyle = '#f8fafc'; ctx.font = (n.radius > 18 ? '12px' : '10px') + ' sans-serif';
+                                ctx.textAlign = 'center'; ctx.fillText(n.label, n.x, n.y - n.radius - 6);
                             });
 
                             ctx.restore();
@@ -566,52 +728,26 @@ public class NanometerVisualizerServer {
                         }
                         renderCanvas();
 
-                        // Multi-Round Snapshot & Controls
                         function captureRoundSnapshot() {
                             const name = 'Round ' + roundCounter++;
-                            const snapshot = {
-                                nodes: JSON.parse(JSON.stringify(rawNodes)),
-                                edges: JSON.parse(JSON.stringify(rawEdges)),
-                                timestamp: new Date().toLocaleTimeString()
-                            };
+                            const snapshot = { nodes: JSON.parse(JSON.stringify(rawNodes)), edges: JSON.parse(JSON.stringify(rawEdges)), timestamp: new Date().toLocaleTimeString() };
                             roundsHistory.set(name, snapshot);
-                            
                             const select = document.getElementById('round-select');
                             const opt = document.createElement('option');
-                            opt.value = name;
-                            opt.innerText = '📷 ' + name + ' (' + snapshot.timestamp + ')';
-                            select.appendChild(opt);
-                            select.value = name;
-                            onRoundChange();
+                            opt.value = name; opt.innerText = '📷 ' + name + ' (' + snapshot.timestamp + ')';
+                            select.appendChild(opt); select.value = name;
                         }
 
                         function onRoundChange() {
                             const val = document.getElementById('round-select').value;
                             currentRound = val;
-                            const indicator = document.getElementById('live-indicator');
-                            if (val === 'live') {
-                                indicator.innerText = '🔴 LIVE STREAMING (WAL)';
-                                indicator.style.background = '#0284c7';
-                            } else {
-                                indicator.innerText = '📷 HISTORICAL: ' + val;
-                                indicator.style.background = '#475569';
+                            if (val !== 'live') {
                                 const snap = roundsHistory.get(val);
-                                if (snap) {
-                                    rawNodes = snap.nodes;
-                                    rawEdges = snap.edges;
-                                    filterAndLayoutNodes();
-                                    updateTablesAndCharts(rawNodes);
-                                }
+                                if (snap) { rawNodes = snap.nodes; rawEdges = snap.edges; filterAndLayoutNodes(); updateTablesAndCharts(rawNodes); }
                             }
                         }
 
-                        function clearRoundData() {
-                            rawNodes = [];
-                            rawEdges = [];
-                            displayNodes = [];
-                            displayEdges = [];
-                            filterAndLayoutNodes();
-                        }
+                        function clearRoundData() { rawNodes = []; rawEdges = []; displayNodes = []; displayEdges = []; filterAndLayoutNodes(); }
 
                         function updateTablesAndCharts(nodesList) {
                             const mBody = document.querySelector('#methods-table tbody');
@@ -625,7 +761,6 @@ public class NanometerVisualizerServer {
                                     <td>${n.avg.toFixed(2)} ms</td>
                                 </tr>
                             `).join('');
-
                             const topMethods = sortedNodes.filter(n => !n.isException).slice(0, 8);
                             latencyChart.data.labels = topMethods.map(n => n.label);
                             latencyChart.data.datasets[0].data = topMethods.map(n => n.p95);
@@ -633,59 +768,38 @@ public class NanometerVisualizerServer {
                             latencyChart.update();
                         }
 
-                        // Poll live data
                         async function pollTelemetry() {
                             if (currentRound !== 'live') return;
                             try {
                                 const res = await fetch('/api/graph');
                                 const data = await res.json();
-
                                 if (data.system) {
                                     const s = data.system;
                                     document.getElementById('kpi-cpu-proc').innerText = s.processCpu.toFixed(1) + '%';
                                     document.getElementById('kpi-cpu-sys').innerText = 'System CPU: ' + s.systemCpu.toFixed(1) + '%';
-                                    const cpuFill = document.getElementById('kpi-cpu-proc-fill');
-                                    cpuFill.style.width = Math.min(100, s.processCpu) + '%';
-                                    cpuFill.className = 'progress-fill' + (s.processCpu > 80 ? ' danger' : (s.processCpu > 50 ? ' warn' : ''));
-
+                                    document.getElementById('kpi-cpu-proc-fill').style.width = Math.min(100, s.processCpu) + '%';
                                     document.getElementById('kpi-heap-used').innerText = s.heapUsedMb + ' MB';
                                     document.getElementById('kpi-heap-max').innerText = 'Max: ' + s.heapMaxMb + ' MB';
                                     const heapPct = s.heapMaxMb > 0 ? (s.heapUsedMb / s.heapMaxMb) * 100 : 0;
-                                    const heapFill = document.getElementById('kpi-heap-fill');
-                                    heapFill.style.width = Math.min(100, heapPct) + '%';
-                                    heapFill.className = 'progress-fill' + (heapPct > 85 ? ' danger' : (heapPct > 65 ? ' warn' : ''));
-
+                                    document.getElementById('kpi-heap-fill').style.width = Math.min(100, heapPct) + '%';
                                     document.getElementById('kpi-non-heap').innerText = s.nonHeapUsedMb + ' MB';
                                     document.getElementById('kpi-threads').innerText = s.threadCount;
                                     document.getElementById('kpi-procs').innerText = s.processors + ' Cores';
-
                                     const secs = Math.floor(s.uptimeMs / 1000);
-                                    const mins = Math.floor(secs / 60);
-                                    document.getElementById('kpi-uptime').innerText = mins > 0 ? (mins + 'm ' + (secs % 60) + 's') : (secs + 's');
-
-                                    const timeStr = new Date().toLocaleTimeString().split(' ')[0];
-                                    timeLabels.push(timeStr);
+                                    document.getElementById('kpi-uptime').innerText = secs + 's';
+                                    timeLabels.push(new Date().toLocaleTimeString().split(' ')[0]);
                                     cpuData.push(s.processCpu);
                                     heapData.push(s.heapUsedMb);
-                                    if (timeLabels.length > maxHistory) {
-                                        timeLabels.shift();
-                                        cpuData.shift();
-                                        heapData.shift();
-                                    }
+                                    if (timeLabels.length > maxHistory) { timeLabels.shift(); cpuData.shift(); heapData.shift(); }
                                     systemChart.update();
                                 }
-
                                 rawNodes = data.nodes || [];
                                 rawEdges = data.edges || [];
                                 document.getElementById('kpi-nodes-count').innerText = rawNodes.length + ' Nodes, ' + rawEdges.length + ' Edges';
-
                                 filterAndLayoutNodes();
                                 updateTablesAndCharts(rawNodes);
-                            } catch (e) {
-                                console.error(e);
-                            }
+                            } catch (e) {}
                         }
-
                         setInterval(pollTelemetry, 1000);
                         pollTelemetry();
                     </script>
@@ -699,5 +813,10 @@ public class NanometerVisualizerServer {
                 os.write(bytes);
             }
         }
+    }
+
+    private static String escapeJson(@Nullable String s) {
+        if (s == null) return "";
+        return s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "");
     }
 }
