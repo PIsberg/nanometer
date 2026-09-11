@@ -7,6 +7,8 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URL;
+import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -18,8 +20,9 @@ import java.util.jar.JarFile;
 import java.util.jar.Manifest;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -76,9 +79,10 @@ class ShadedJarLayoutIT {
     }
 
     @Test
-    @DisplayName("carries no multi-release entries, matching its non-multi-release manifest")
-    void carriesNoMultiReleaseEntries() throws IOException {
-        List<String> versioned = new ArrayList<>();
+    @DisplayName("is a coherent multi-release JAR: the flag is set and versioned entries exist")
+    void isACoherentMultiReleaseJar() throws IOException {
+        List<String> versionedClasses = new ArrayList<>();
+        List<String> moduleInfos = new ArrayList<>();
         Manifest manifest;
 
         try (JarFile jar = new JarFile(shadedJar.toFile())) {
@@ -86,20 +90,68 @@ class ShadedJarLayoutIT {
             Enumeration<JarEntry> entries = jar.entries();
             while (entries.hasMoreElements()) {
                 JarEntry entry = entries.nextElement();
-                if (entry.getName().startsWith("META-INF/versions/") && !entry.isDirectory()) {
-                    versioned.add(entry.getName());
+                String name = entry.getName();
+                if (entry.isDirectory() || !name.startsWith("META-INF/versions/")) {
+                    continue;
+                }
+                if (name.endsWith("module-info.class")) {
+                    moduleInfos.add(name);
+                } else if (name.endsWith(".class")) {
+                    versionedClasses.add(name);
                 }
             }
         }
 
         assertNotNull(manifest, "shaded JAR has no manifest");
-        String multiRelease = manifest.getMainAttributes().getValue(new Attributes.Name("Multi-Release"));
-        assertNull(multiRelease,
-                "manifest declares Multi-Release, so META-INF/versions entries would now be loaded; "
-                        + "their paths must be relocated before this is enabled");
-        assertEquals(List.of(), versioned,
-                "shaded JAR carries META-INF/versions entries the JVM will never load because the "
-                        + "manifest is not multi-release");
+        assertEquals("true",
+                manifest.getMainAttributes().getValue(new Attributes.Name("Multi-Release")),
+                "versioned entries are shipped but the manifest does not declare Multi-Release, so "
+                        + "the JVM will silently ignore every one of them");
+        assertNotEquals(List.of(), versionedClasses,
+                "the manifest declares Multi-Release but there are no versioned classes, so the "
+                        + "flag is claiming something the JAR does not provide");
+        assertEquals(List.of(), moduleInfos,
+                "a shaded uber-JAR must not ship module-info; its packages are merged from many "
+                        + "modules and the descriptor cannot be correct");
+    }
+
+    /**
+     * The reason the versioned entries are carried at all: Byte Buddy ships its JDK ClassFile API
+     * bridge only under {@code META-INF/versions/24}, and uses it in place of its bundled ASM on a
+     * new enough JVM.
+     *
+     * <p>Asserts both directions rather than skipping below 24, so the test always proves
+     * something: the bridge resolves where it should and is correctly invisible where it should
+     * not be.
+     */
+    @Test
+    @DisplayName("exposes the relocated JDK ClassFile API bridge exactly on JDK 24 and newer")
+    void exposesTheClassFileApiBridgeOnSupportedRuntimes() throws IOException {
+        String bridge = "nanometer.shaded.bytebuddy.jar.asmjdkbridge.JdkClassReader";
+        int runtime = Runtime.version().feature();
+
+        try (URLClassLoader loader = new URLClassLoader(
+                new URL[]{shadedJar.toUri().toURL()}, ClassLoader.getPlatformClassLoader())) {
+
+            if (runtime >= 24) {
+                Class<?> loaded;
+                try {
+                    loaded = Class.forName(bridge, false, loader);
+                } catch (ClassNotFoundException e) {
+                    throw new AssertionError("JDK " + runtime + " should see the relocated "
+                            + "ClassFile API bridge, but it did not resolve. Either the "
+                            + "Multi-Release manifest entry is missing or the versioned entry "
+                            + "paths were not relocated to match the classes they declare.", e);
+                }
+                assertEquals(bridge, loaded.getName());
+            } else {
+                assertThrows(ClassNotFoundException.class,
+                        () -> Class.forName(bridge, false, loader),
+                        "JDK " + runtime + " is below the bridge's META-INF/versions/24 floor, so "
+                                + "it must not resolve; if it does, the versioned classes have "
+                                + "leaked into the base JAR where older JVMs would load them");
+            }
+        }
     }
 
     @Test
@@ -114,7 +166,10 @@ class ShadedJarLayoutIT {
                 if (!name.endsWith(".class")) {
                     continue;
                 }
-                if (name.startsWith("net/bytebuddy/") || name.startsWith("org/sqlite/")) {
+                // Versioned entries count too: their paths are relocated separately from the base
+                // ones, so a relocation that covers only the base JAR would slip through here.
+                String path = stripVersionPrefix(name);
+                if (path.startsWith("net/bytebuddy/") || path.startsWith("org/sqlite/")) {
                     unrelocated.add(name);
                 }
             }

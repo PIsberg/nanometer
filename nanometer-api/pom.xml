@@ -95,11 +95,20 @@
                                 <filter>
                                     <artifact>*:*</artifact>
                                     <excludes>
-                                        <exclude>META-INF/versions/**</exclude>
+                                        <exclude>META-INF/versions/*/module-info.class</exclude>
+                                        <exclude>META-INF/versions/*/OSGI-INF/**</exclude>
                                     </excludes>
                                 </filter>
                             </filters>
                             <relocations>
+                                <relocation>
+                                    <pattern>META-INF.versions.24.net.bytebuddy</pattern>
+                                    <shadedPattern>META-INF.versions.24.nanometer.shaded.bytebuddy</shadedPattern>
+                                </relocation>
+                                <relocation>
+                                    <pattern>META-INF.versions.9.org.sqlite</pattern>
+                                    <shadedPattern>META-INF.versions.9.nanometer.shaded.sqlite</shadedPattern>
+                                </relocation>
                                 <relocation>
                                     <pattern>net.bytebuddy</pattern>
                                     <shadedPattern>nanometer.shaded.bytebuddy</shadedPattern>
@@ -116,6 +125,7 @@
                                         <Agent-Class>nanometer.agent.NanometerAgent</Agent-Class>
                                         <Can-Redefine-Classes>true</Can-Redefine-Classes>
                                         <Can-Retransform-Classes>true</Can-Retransform-Classes>
+                                        <Multi-Release>true</Multi-Release>
                                     </manifestEntries>
                                 </transformer>
                             </transformers>
