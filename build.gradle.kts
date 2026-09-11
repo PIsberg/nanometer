@@ -49,5 +49,16 @@ subprojects {
             "-XX:+EnableDynamicAgentLoading",
             "-Djdk.attach.allowAttachSelf=true"
         )
+
+        // *IT classes inspect and run the shaded uber-JAR, which only the Maven build produces;
+        // this build performs no shading at all. Maven keeps them out of surefire by naming
+        // convention and runs them under failsafe after package. Gradle's test task scans every
+        // test class, so it has to be told, or it runs them with no artifact to point at and they
+        // fail on a missing system property.
+        //
+        // They are excluded rather than made to skip on purpose: under Maven these must fail loudly
+        // if the artifact or the property is missing, because a gate that quietly skips proves
+        // nothing.
+        exclude("**/*IT.class")
     }
 }
