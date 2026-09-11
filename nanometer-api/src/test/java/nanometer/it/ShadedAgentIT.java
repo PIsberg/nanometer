@@ -100,6 +100,25 @@ class ShadedAgentIT {
                 "exceptional exit must be recorded with its exception type");
     }
 
+    @Test
+    @DisplayName("instruments a class defined by a child class loader")
+    void instrumentsChildLoadedClasses() throws Exception {
+        List<String> output = runUnderAgent("nanometer.it.driver.ChildLoaderDriver",
+                itClasses.toAbsolutePath().toString());
+        List<Map<String, String>> events = parseEvents(output);
+
+        assertNotEquals(0, events.size(),
+                "agent recorded nothing for a child-loaded class. Advice inlines a direct "
+                        + "reference to AutoMetricInterceptor into the instrumented class, so this "
+                        + "fails if the interceptor is not visible from that class's loader. "
+                        + "Output:" + System.lineSeparator() + String.join(System.lineSeparator(), output));
+
+        assertTrue(events.stream().anyMatch(e -> "parent".equals(e.get("method"))),
+                "no span recorded for the child-loaded parent(). Events: " + events);
+        assertTrue(events.stream().anyMatch(e -> "child".equals(e.get("method"))),
+                "no span recorded for the child-loaded child(). Events: " + events);
+    }
+
     private static Map<String, String> single(List<Map<String, String>> events, String method) {
         List<Map<String, String>> matches = events.stream()
                 .filter(e -> method.equals(e.get("method")))
@@ -117,12 +136,19 @@ class ShadedAgentIT {
      * how a user would run it.
      */
     private static List<String> runTargetUnderAgent() throws Exception {
+        return runUnderAgent("nanometer.it.driver.AgentDriver");
+    }
+
+    private static List<String> runUnderAgent(String mainClass, String... args) throws Exception {
         String java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
-        ProcessBuilder builder = new ProcessBuilder(
+        List<String> command = new ArrayList<>(List.of(
                 java,
                 "-javaagent:" + shadedJar.toAbsolutePath() + "=" + INSTRUMENTED_PACKAGE,
                 "-cp", itClasses.toAbsolutePath().toString(),
-                "nanometer.it.driver.AgentDriver");
+                mainClass));
+        command.addAll(List.of(args));
+
+        ProcessBuilder builder = new ProcessBuilder(command);
         builder.redirectErrorStream(true);
 
         Process process = builder.start();
