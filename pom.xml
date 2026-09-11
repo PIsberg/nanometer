@@ -39,6 +39,8 @@
         <pmd.version>7.0.0</pmd.version>
         <archunit.version>1.3.0</archunit.version>
         <jacoco.version>0.8.12</jacoco.version>
+        <!-- surefire and failsafe share a codebase; keep them on one version -->
+        <surefire.version>3.6.0</surefire.version>
     </properties>
 
     <dependencyManagement>
@@ -187,12 +189,19 @@
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-surefire-plugin</artifactId>
-                    <version>3.6.0</version>
+                    <version>${surefire.version}</version>
                     <configuration>
                         <systemPropertyVariables>
                             <license.mock.mode>true</license.mock.mode>
                         </systemPropertyVariables>
                     </configuration>
+                </plugin>
+
+                <!-- Failsafe Integration Test Plugin (runs after package, against the shaded JAR) -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-failsafe-plugin</artifactId>
+                    <version>${surefire.version}</version>
                 </plugin>
 
                 <!-- JaCoCo Code Coverage -->

@@ -132,7 +132,6 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-failsafe-plugin</artifactId>
-                <version>3.2.5</version>
                 <configuration>
                     <systemPropertyVariables>
                         <nanometer.shaded.jar>${project.build.directory}/${project.build.finalName}-all.jar</nanometer.shaded.jar>
