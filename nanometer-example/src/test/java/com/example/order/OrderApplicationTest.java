@@ -88,7 +88,8 @@ public class OrderApplicationTest {
         // 5. Query REST API
         HttpClient client = HttpClient.newHttpClient();
         HttpRequest req = HttpRequest.newBuilder()
-                .uri(URI.create("http://localhost:" + EXAMPLE_TEST_PORT + "/api/graph"))
+                .uri(URI.create("http://localhost:" + EXAMPLE_TEST_PORT + "/api/graph?token="
+                        + Nanometer.getVisualizerToken()))
                 .GET()
                 .build();
 

@@ -11,6 +11,10 @@ import org.junit.jupiter.api.Test;
 
 import java.net.URI;
 import java.net.http.HttpClient;
+import java.io.IOException;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 
@@ -47,7 +51,7 @@ public class NanometerVisualizerServerTest {
     @Test
     public void testHtmlDashboardEndpoint() throws Exception {
         HttpRequest req = HttpRequest.newBuilder()
-                .uri(URI.create("http://localhost:" + PORT + "/"))
+                .uri(URI.create("http://localhost:" + PORT + "/?token=" + server.getAuthToken()))
                 .GET()
                 .build();
 
@@ -66,7 +70,7 @@ public class NanometerVisualizerServerTest {
         ));
 
         HttpRequest req = HttpRequest.newBuilder()
-                .uri(URI.create("http://localhost:" + PORT + "/api/graph"))
+                .uri(URI.create("http://localhost:" + PORT + "/api/graph?token=" + server.getAuthToken()))
                 .GET()
                 .build();
 
@@ -80,7 +84,7 @@ public class NanometerVisualizerServerTest {
     @Test
     public void testApiSystemEndpoint() throws Exception {
         HttpRequest req = HttpRequest.newBuilder()
-                .uri(URI.create("http://localhost:" + PORT + "/api/system"))
+                .uri(URI.create("http://localhost:" + PORT + "/api/system?token=" + server.getAuthToken()))
                 .GET()
                 .build();
 
@@ -94,7 +98,7 @@ public class NanometerVisualizerServerTest {
     public void testNewFeatureEndpoints() throws Exception {
         // 1. Flamegraph
         HttpResponse<String> flameRes = client.send(
-                HttpRequest.newBuilder().uri(URI.create("http://localhost:" + PORT + "/api/flamegraph")).GET().build(),
+                HttpRequest.newBuilder().uri(URI.create("http://localhost:" + PORT + "/api/flamegraph?token=" + server.getAuthToken())).GET().build(),
                 HttpResponse.BodyHandlers.ofString()
         );
         assertEquals(200, flameRes.statusCode());
@@ -102,14 +106,14 @@ public class NanometerVisualizerServerTest {
 
         // 2. Anomalies
         HttpResponse<String> anomRes = client.send(
-                HttpRequest.newBuilder().uri(URI.create("http://localhost:" + PORT + "/api/anomalies")).GET().build(),
+                HttpRequest.newBuilder().uri(URI.create("http://localhost:" + PORT + "/api/anomalies?token=" + server.getAuthToken())).GET().build(),
                 HttpResponse.BodyHandlers.ofString()
         );
         assertEquals(200, anomRes.statusCode());
 
         // 3. RCA
         HttpResponse<String> rcaRes = client.send(
-                HttpRequest.newBuilder().uri(URI.create("http://localhost:" + PORT + "/api/rca")).GET().build(),
+                HttpRequest.newBuilder().uri(URI.create("http://localhost:" + PORT + "/api/rca?token=" + server.getAuthToken())).GET().build(),
                 HttpResponse.BodyHandlers.ofString()
         );
         assertEquals(200, rcaRes.statusCode());
@@ -117,14 +121,14 @@ public class NanometerVisualizerServerTest {
 
         // 4. Control (GET & POST)
         HttpResponse<String> ctrlGet = client.send(
-                HttpRequest.newBuilder().uri(URI.create("http://localhost:" + PORT + "/api/control")).GET().build(),
+                HttpRequest.newBuilder().uri(URI.create("http://localhost:" + PORT + "/api/control?token=" + server.getAuthToken())).GET().build(),
                 HttpResponse.BodyHandlers.ofString()
         );
         assertEquals(200, ctrlGet.statusCode());
         assertTrue(ctrlGet.body().contains("sampleRate"));
 
         HttpResponse<String> ctrlPost = client.send(
-                HttpRequest.newBuilder().uri(URI.create("http://localhost:" + PORT + "/api/control"))
+                HttpRequest.newBuilder().uri(URI.create("http://localhost:" + PORT + "/api/control?token=" + server.getAuthToken()))
                         .POST(HttpRequest.BodyPublishers.ofString("rate=0.5&tail=true")).build(),
                 HttpResponse.BodyHandlers.ofString()
         );
@@ -132,7 +136,7 @@ public class NanometerVisualizerServerTest {
 
         // 5. OTLP
         HttpResponse<String> otlpRes = client.send(
-                HttpRequest.newBuilder().uri(URI.create("http://localhost:" + PORT + "/api/otlp")).GET().build(),
+                HttpRequest.newBuilder().uri(URI.create("http://localhost:" + PORT + "/api/otlp?token=" + server.getAuthToken())).GET().build(),
                 HttpResponse.BodyHandlers.ofString()
         );
         assertEquals(200, otlpRes.statusCode());
@@ -140,7 +144,7 @@ public class NanometerVisualizerServerTest {
 
         // 6. SQL (503 when queryService is null)
         HttpResponse<String> sqlRes = client.send(
-                HttpRequest.newBuilder().uri(URI.create("http://localhost:" + PORT + "/api/sql"))
+                HttpRequest.newBuilder().uri(URI.create("http://localhost:" + PORT + "/api/sql?token=" + server.getAuthToken()))
                         .POST(HttpRequest.BodyPublishers.ofString("SELECT 1;")).build(),
                 HttpResponse.BodyHandlers.ofString()
         );
@@ -151,7 +155,7 @@ public class NanometerVisualizerServerTest {
     public void testNotFoundAndMethodNotAllowed() throws Exception {
         // 404 Not Found
         HttpRequest req404 = HttpRequest.newBuilder()
-                .uri(URI.create("http://localhost:" + PORT + "/non-existent-page"))
+                .uri(URI.create("http://localhost:" + PORT + "/non-existent-page?token=" + server.getAuthToken()))
                 .GET()
                 .build();
 
@@ -160,7 +164,7 @@ public class NanometerVisualizerServerTest {
 
         // 405 Method Not Allowed on /api/graph
         HttpRequest req405 = HttpRequest.newBuilder()
-                .uri(URI.create("http://localhost:" + PORT + "/api/graph"))
+                .uri(URI.create("http://localhost:" + PORT + "/api/graph?token=" + server.getAuthToken()))
                 .POST(HttpRequest.BodyPublishers.noBody())
                 .build();
 
@@ -169,7 +173,7 @@ public class NanometerVisualizerServerTest {
 
         // 405 Method Not Allowed on /api/system
         HttpRequest req405Sys = HttpRequest.newBuilder()
-                .uri(URI.create("http://localhost:" + PORT + "/api/system"))
+                .uri(URI.create("http://localhost:" + PORT + "/api/system?token=" + server.getAuthToken()))
                 .POST(HttpRequest.BodyPublishers.noBody())
                 .build();
 
@@ -182,5 +186,86 @@ public class NanometerVisualizerServerTest {
         server.start();
         server.stop();
         server.stop();
+    }
+
+    @Test
+    public void apiRequestsWithoutTheTokenAreRejected() throws Exception {
+        for (String path : new String[]{"/", "/api/graph", "/api/system", "/api/flamegraph",
+                "/api/anomalies", "/api/rca", "/api/otlp", "/api/control"}) {
+            HttpResponse<String> res = client.send(
+                    HttpRequest.newBuilder()
+                            .uri(URI.create("http://localhost:" + PORT + path))
+                            .GET().build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertEquals(401, res.statusCode(), path + " served without a token");
+        }
+    }
+
+    @Test
+    public void aWrongTokenIsRejected() throws Exception {
+        HttpResponse<String> res = client.send(
+                HttpRequest.newBuilder()
+                        .uri(URI.create("http://localhost:" + PORT + "/api/graph?token=nope"))
+                        .GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(401, res.statusCode());
+    }
+
+    @Test
+    public void theSqlEndpointCannotBeReachedWithoutTheToken() throws Exception {
+        HttpResponse<String> res = client.send(
+                HttpRequest.newBuilder()
+                        .uri(URI.create("http://localhost:" + PORT + "/api/sql"))
+                        .POST(HttpRequest.BodyPublishers.ofString("SELECT 1"))
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(401, res.statusCode(), "an unauthenticated arbitrary-SQL endpoint");
+    }
+
+    @Test
+    public void responsesDoNotAllowCrossOriginReads() throws Exception {
+        HttpResponse<String> res = client.send(
+                HttpRequest.newBuilder()
+                        .uri(URI.create("http://localhost:" + PORT + "/api/system?token="
+                                + server.getAuthToken()))
+                        .GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(200, res.statusCode());
+        assertTrue(res.headers().firstValue("Access-Control-Allow-Origin").isEmpty(),
+                "a wildcard CORS header lets any page the developer is browsing read this");
+    }
+
+    @Test
+    public void theDashboardTeachesItsPageToForwardTheToken() throws Exception {
+        HttpResponse<String> res = client.send(
+                HttpRequest.newBuilder()
+                        .uri(URI.create("http://localhost:" + PORT + "/?token="
+                                + server.getAuthToken()))
+                        .GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(200, res.statusCode());
+        assertTrue(res.body().contains("X-Nanometer-Token"),
+                "the page must send the token, or every panel on it reads 401");
+    }
+
+    @Test
+    public void theServerBindsLoopbackOnlyByDefault() throws Exception {
+        // A dashboard exposing class names, stacks, SQL and sampler controls must not land on a
+        // network interface unless someone asked for that.
+        for (InetAddress address : InetAddress.getAllByName(InetAddress.getLocalHost().getHostName())) {
+            if (address.isLoopbackAddress()) {
+                continue;
+            }
+            try (Socket probe = new Socket()) {
+                probe.connect(new InetSocketAddress(address, PORT), 400);
+                fail("reachable on non-loopback address " + address.getHostAddress());
+            } catch (IOException expected) {
+                // Refused or unreachable is the point.
+            }
+        }
     }
 }
