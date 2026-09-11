@@ -74,6 +74,18 @@
                             <shadedArtifactAttached>true</shadedArtifactAttached>
                             <shadedClassifierName>all</shadedClassifierName>
                             <!--
+                                The uber-JAR is an attached artifact under the "all" classifier; the
+                                main artifact stays the thin nanometer-api jar, which still needs its
+                                dependencies at runtime. Shade's dependency-reduced POM strips every
+                                shaded dependency from the published POM, so a consumer declaring
+                                io.nanometer:nanometer-api resolved a jar with no transitive
+                                dependencies and died on NoClassDefFoundError for
+                                nanometer/buffer/MetricRingBuffer. A reactor build hides this,
+                                because sibling modules resolve from the reactor rather than the
+                                repository.
+                            -->
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <!--
                                 Shade rewrites the bytecode inside META-INF/versions/N/ entries to
                                 the relocated package but cannot rewrite their entry paths, which
                                 leaves e.g. META-INF/versions/24/net/bytebuddy/.../AsmAttribute.class
@@ -159,6 +171,7 @@
                     <systemPropertyVariables>
                         <nanometer.shaded.jar>${project.build.directory}/${project.build.finalName}-all.jar</nanometer.shaded.jar>
                         <nanometer.it.classes>${project.build.testOutputDirectory}</nanometer.it.classes>
+                        <nanometer.module.basedir>${project.basedir}</nanometer.module.basedir>
                     </systemPropertyVariables>
                 </configuration>
                 <executions>

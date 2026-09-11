@@ -241,6 +241,23 @@ class ShadedJarLayoutIT {
         }
     }
 
+    @Test
+    @DisplayName("publishes a POM that still carries the module's dependencies")
+    void doesNotPublishADependencyReducedPom() {
+        String basedir = System.getProperty("nanometer.module.basedir");
+        assertNotNull(basedir, "nanometer.module.basedir is not set");
+
+        // The uber-JAR is attached under the "all" classifier, so the main artifact is still the
+        // thin nanometer-api jar and needs its dependencies. Shade's dependency-reduced POM strips
+        // every shaded dependency from the published POM, and a consumer then resolves a jar with
+        // no transitive dependencies and dies on NoClassDefFoundError for
+        // nanometer/buffer/MetricRingBuffer. A reactor build never notices, because sibling modules
+        // resolve from the reactor rather than from the repository.
+        assertFalse(Files.exists(Path.of(basedir, "dependency-reduced-pom.xml")),
+                "shade is publishing a dependency-reduced POM again; set "
+                        + "createDependencyReducedPom to false");
+    }
+
     private static String stripVersionPrefix(String entryName) {
         if (!entryName.startsWith("META-INF/versions/")) {
             return entryName;
