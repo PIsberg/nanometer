@@ -20,6 +20,7 @@ The following elements are well-tested core components. Make changes with extrem
 ## PERFORMANCE CONSTRAINTS (HOT PATH)
 Never introduce O(n²) complexity into these elements. Always reason about complexity before proposing changes:
 
+- `nanometer.agent.AutoMetricInterceptor.exitSpan(java.lang.String,java.lang.String,long,java.lang.Throwable)`: Minimal execution overhead, atomic thread correlation
 - `nanometer.agent.AutoMetricInterceptor.intercept(java.lang.reflect.Method,java.util.concurrent.Callable<?>)`: Minimal execution overhead, atomic thread correlation
 
 ## THREAD-SAFE BY DESIGN
