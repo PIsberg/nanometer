@@ -1,5 +1,6 @@
 package nanometer.storage;
 
+import nanometer.anomaly.AnomalyDetector;
 import nanometer.buffer.MetricRingBuffer;
 import nanometer.graph.GraphMetricAggregator;
 import nanometer.model.RelationalMetricEvent;
@@ -108,6 +109,55 @@ public class MetricDatabaseFlusherTest {
 
         writer.shutdown();
         flusher.shutdown();
+    }
+
+    @Test
+    public void theDrainLoopFeedsTheAnomalyDetector() throws Exception {
+        Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:");
+        MetricRingBuffer buffer = new MetricRingBuffer(64);
+        AnomalyDetector detector = new AnomalyDetector();
+        MetricDatabaseFlusher flusher = new MetricDatabaseFlusher(
+                connection, buffer, new GraphMetricAggregator(),
+                MetricDatabaseFlusher.DEFAULT_RETENTION, detector, null);
+
+        // A baseline with some spread, since the detector needs a non-trivial standard deviation
+        // before it will judge anything, then one call far outside it.
+        for (int i = 0; i < 30; i++) {
+            buffer.offer(timed("steady", 9_000_000L + (i % 5) * 500_000L));
+        }
+        flusher.flushBatch();
+        buffer.offer(timed("steady", 5_000_000_000L));
+        flusher.flushBatch();
+
+        assertFalse(detector.getRecentAnomalies().isEmpty(),
+                "the detector was constructed and never fed, so /api/anomalies always read empty");
+
+        flusher.shutdown();
+    }
+
+    @Test
+    public void recentEventsAreExposedForExportAndStayBounded() throws Exception {
+        Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:");
+        MetricRingBuffer buffer = new MetricRingBuffer(2048);
+        MetricDatabaseFlusher flusher = new MetricDatabaseFlusher(
+                connection, buffer, new GraphMetricAggregator());
+
+        for (int i = 0; i < 900; i++) {
+            buffer.offer(timed("call", 1_000_000L));
+        }
+        flusher.flushBatch();
+
+        assertEquals(500, flusher.recentEvents().size(),
+                "the OTLP endpoint needs real spans, but this must not become a second unbounded "
+                        + "retention of every event");
+
+        flusher.shutdown();
+    }
+
+    private static RelationalMetricEvent timed(String methodName, long durationNs) {
+        return new RelationalMetricEvent(
+                0L, 7L, 0L, 1L, "TestClass", methodName, "", "",
+                durationNs, "NONE", System.currentTimeMillis());
     }
 
     private static RelationalMetricEvent event(String methodName, long startTimestamp) {

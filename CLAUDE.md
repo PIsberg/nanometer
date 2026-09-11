@@ -146,6 +146,7 @@
     <note>Detailed per-element guardrails for the elements below live in scoped rule files that load automatically when the matching source file is opened. Consult the referenced file before modifying an element.</note>
     <element path="nanometer.storage.MetricDatabaseFlusher" rules=".claude/rules/nanometer-storage-MetricDatabaseFlusher.md"/>
     <element path="nanometer.storage.MetricQueryService" rules=".claude/rules/nanometer-storage-MetricQueryService.md"/>
+    <element path="nanometer.storage.OtlpSink" rules=".claude/rules/nanometer-storage-OtlpSink.md"/>
   </scoped_rules>
 
 <rule>When you work on any element listed in <scoped_rules>, open its referenced rule file and apply the guardrails there. The rule files are the authoritative source for those elements.</rule>

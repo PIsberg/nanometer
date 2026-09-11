@@ -163,11 +163,13 @@ The following elements emit metrics, traces, or log statements watched by dashbo
 
 - `nanometer.storage.MetricDatabaseFlusher`: Metrics: db_batch_drain_count, db_write_latency_ms. 
 - `nanometer.storage.MetricQueryService`: Metrics: sql_queries_executed_total, sql_query_duration_ms. 
+- `nanometer.storage.OtlpSink`: Metrics: otlp_batches_exported_total, otlp_batches_dropped_total. 
 
 ## PUBLIC API SURFACE PROTECTION
 Preserve public signatures, Javadoc, and backwards compatibility:
 
 - `nanometer.storage.MetricQueryService`: Public API surface. Preserve signature, Javadoc, backwards compatibility, and binary/source stability. Reason: Public interface for querying SQLite telemetry metrics database
+- `nanometer.storage.OtlpSink`: Public API surface. Preserve signature, Javadoc, backwards compatibility, and binary/source stability. Reason: Continuous OTLP export of collected spans
 <!-- VIBETAGS-MODULE-END: nanometer-storage -->
 <!-- VIBETAGS-MODULE: nanometer-visualizer -->
 # GEMINI AI INSTRUCTIONS

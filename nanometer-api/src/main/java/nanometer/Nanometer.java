@@ -8,6 +8,7 @@ import nanometer.graph.GraphMetricAggregator;
 import nanometer.sampling.AdaptiveSampler;
 import nanometer.server.NanometerVisualizerServer;
 import nanometer.storage.MetricDatabaseFlusher;
+import nanometer.storage.OtlpSink;
 import nanometer.storage.MetricQueryService;
 import net.bytebuddy.agent.ByteBuddyAgent;
 import org.jspecify.annotations.Nullable;
@@ -36,6 +37,8 @@ public class Nanometer {
     private static volatile @Nullable MetricDatabaseFlusher dbFlusher;
     private static volatile @Nullable MetricQueryService queryService;
     private static volatile @Nullable NanometerVisualizerServer visualizerServer;
+    private static volatile @Nullable AnomalyDetector anomalyDetector;
+    private static volatile @Nullable OtlpSink otlpSink;
 
     /**
      * Installs the agent for a package prefix and opens the local metrics store.
@@ -81,7 +84,18 @@ public class Nanometer {
             }
             String path = dbFile.getAbsolutePath();
             Connection writeConnection = DriverManager.getConnection("jdbc:sqlite:" + path);
-            dbFlusher = new MetricDatabaseFlusher(writeConnection, buffer, aggregator);
+
+            // The detector and the exporter are fed from the drain loop. Both were previously
+            // constructed somewhere and then never handed an event, so /api/anomalies always
+            // reported nothing and no span was ever exported.
+            anomalyDetector = new AnomalyDetector();
+            String otlpEndpoint = System.getenv("OTEL_EXPORTER_OTLP_ENDPOINT");
+            otlpSink = (otlpEndpoint != null && !otlpEndpoint.isBlank())
+                    ? new OtlpSink(otlpEndpoint, System.getProperty("nanometer.service.name", "nanometer-service"))
+                    : null;
+
+            dbFlusher = new MetricDatabaseFlusher(writeConnection, buffer, aggregator,
+                    MetricDatabaseFlusher.DEFAULT_RETENTION, anomalyDetector, otlpSink);
             queryService = new MetricQueryService(MetricQueryService.openReadOnly(path));
 
             initialized = true;
@@ -97,7 +111,7 @@ public class Nanometer {
                     graphAggregator,
                     dbFlusher,
                     queryService,
-                    new AnomalyDetector(),
+                    anomalyDetector != null ? anomalyDetector : new AnomalyDetector(),
                     AutoMetricInterceptor.getProfileSampler(),
                     AutoMetricInterceptor.getSampler()
             );
@@ -150,6 +164,11 @@ public class Nanometer {
             queryService.close();
             queryService = null;
         }
+        if (otlpSink != null) {
+            otlpSink.close();
+            otlpSink = null;
+        }
+        anomalyDetector = null;
         ringBuffer = null;
         graphAggregator = null;
         initialized = false;

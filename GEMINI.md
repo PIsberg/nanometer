@@ -97,6 +97,7 @@ Detailed per-element guardrails live in scoped rule files that load automaticall
 
 - `nanometer.storage.MetricDatabaseFlusher` → `.gemini/rules/nanometer-storage-MetricDatabaseFlusher.md`
 - `nanometer.storage.MetricQueryService` → `.gemini/rules/nanometer-storage-MetricQueryService.md`
+- `nanometer.storage.OtlpSink` → `.gemini/rules/nanometer-storage-OtlpSink.md`
 <!-- VIBETAGS-MODULE-END: nanometer-storage -->
 <!-- VIBETAGS-MODULE: nanometer-visualizer -->
 # AUTO-GENERATED AI RULES

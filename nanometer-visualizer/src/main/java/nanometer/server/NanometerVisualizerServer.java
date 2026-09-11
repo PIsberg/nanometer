@@ -7,6 +7,7 @@ import nanometer.anomaly.AnomalyDetector;
 import nanometer.anomaly.RootCauseAnalyzer;
 import nanometer.discovery.GraphAutoDiscoveryEngine;
 import nanometer.export.OtlpJsonExporter;
+import nanometer.model.RelationalMetricEvent;
 import nanometer.graph.GraphMetricAggregator;
 import nanometer.profiling.JfrProfileSampler;
 import nanometer.sampling.AdaptiveSampler;
@@ -315,8 +316,10 @@ public class NanometerVisualizerServer {
                 exchange.sendResponseHeaders(405, -1);
                 return;
             }
-            String json = OtlpJsonExporter.exportToJson("nanometer-service", List.of());
-            sendJsonResponse(exchange, 200, json);
+            // This used to pass List.of(), so the endpoint always answered with an envelope
+            // containing no spans however much telemetry had been collected.
+            List<RelationalMetricEvent> spans = flusher != null ? flusher.recentEvents() : List.of();
+            sendJsonResponse(exchange, 200, OtlpJsonExporter.exportToJson("nanometer-service", spans));
         }
     }
 

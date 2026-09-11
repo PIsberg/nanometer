@@ -1,8 +1,10 @@
 package nanometer.storage;
 
+import nanometer.anomaly.AnomalyDetector;
 import nanometer.buffer.MetricRingBuffer;
 import nanometer.graph.GraphMetricAggregator;
 import nanometer.model.RelationalMetricEvent;
+import org.jspecify.annotations.Nullable;
 import se.deversity.vibetags.annotations.AICore;
 import se.deversity.vibetags.annotations.AIObservability;
 import se.deversity.vibetags.annotations.AIThreadSafe;
@@ -13,6 +15,7 @@ import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Duration;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Executors;
@@ -33,11 +36,23 @@ public class MetricDatabaseFlusher {
     /** How long rows are kept before the retention job removes them. */
     public static final Duration DEFAULT_RETENTION = Duration.ofHours(6);
 
+    /** How many recently flushed events stay available for on-demand OTLP serialisation. */
+    private static final int RECENT_EVENT_CAPACITY = 500;
+
     private final Connection connection;
     private final MetricRingBuffer ringBuffer;
     private final GraphMetricAggregator aggregator;
     private final ScheduledExecutorService scheduler;
     private final Duration retention;
+
+    /**
+     * Consumers that used to be constructed and then never fed. The drain loop is the one place
+     * every event passes through, so this is where they belong.
+     */
+    private final @Nullable AnomalyDetector anomalyDetector;
+    private final @Nullable OtlpSink otlpSink;
+
+    private final ArrayDeque<RelationalMetricEvent> recentEvents = new ArrayDeque<>();
 
     public MetricDatabaseFlusher(Connection connection, MetricRingBuffer ringBuffer, GraphMetricAggregator aggregator) {
         this(connection, ringBuffer, aggregator, DEFAULT_RETENTION);
@@ -47,10 +62,25 @@ public class MetricDatabaseFlusher {
                                  MetricRingBuffer ringBuffer,
                                  GraphMetricAggregator aggregator,
                                  Duration retention) {
+        this(connection, ringBuffer, aggregator, retention, null, null);
+    }
+
+    /**
+     * @param anomalyDetector fed every drained event, or {@code null} to skip detection
+     * @param otlpSink        fed every drained event, or {@code null} for no export
+     */
+    public MetricDatabaseFlusher(Connection connection,
+                                 MetricRingBuffer ringBuffer,
+                                 GraphMetricAggregator aggregator,
+                                 Duration retention,
+                                 @Nullable AnomalyDetector anomalyDetector,
+                                 @Nullable OtlpSink otlpSink) {
         this.connection = connection;
         this.ringBuffer = ringBuffer;
         this.aggregator = aggregator;
         this.retention = retention;
+        this.anomalyDetector = anomalyDetector;
+        this.otlpSink = otlpSink;
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "nanometer-db-flusher");
             t.setDaemon(true);
@@ -138,9 +168,16 @@ public class MetricDatabaseFlusher {
             return;
         }
 
-        // Process in-memory graph
+        // Process in-memory graph, and feed the consumers that were previously never called.
         for (RelationalMetricEvent event : batch) {
             aggregator.processEvent(event);
+            if (anomalyDetector != null) {
+                anomalyDetector.evaluate(event);
+            }
+            rememberRecent(event);
+        }
+        if (otlpSink != null) {
+            otlpSink.accept(batch);
         }
 
         // Write batch to SQLite
@@ -173,6 +210,22 @@ public class MetricDatabaseFlusher {
             }
             System.err.println("[Nanometer] DB flush error: " + e.getMessage());
         }
+    }
+
+    private synchronized void rememberRecent(RelationalMetricEvent event) {
+        if (recentEvents.size() == RECENT_EVENT_CAPACITY) {
+            recentEvents.removeFirst();
+        }
+        recentEvents.addLast(event);
+    }
+
+    /**
+     * The most recently flushed events, oldest first. Bounded, so this cannot become a second
+     * unbounded retention of every span. Exists so the OTLP endpoint can serialise real spans:
+     * it previously hardcoded an empty list and always returned an envelope with none.
+     */
+    public synchronized List<RelationalMetricEvent> recentEvents() {
+        return List.copyOf(recentEvents);
     }
 
     public void shutdown() {
