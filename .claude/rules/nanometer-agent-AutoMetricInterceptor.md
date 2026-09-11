@@ -12,7 +12,7 @@ paths: ["**/AutoMetricInterceptor.java"]
 ## Performance Constraints
 - **Rule**: Optimal complexity required. O(n^2) is forbidden on hot paths.
 - **Constraint**: Minimal execution overhead, atomic thread correlation
-- **Applies to**: `AutoMetricInterceptor.exitSpan(java.lang.String,java.lang.String,long,java.lang.@org.jspecify.annotations.Nullable Throwable)`, `AutoMetricInterceptor.intercept(java.lang.reflect.Method,java.util.concurrent.Callable<?>)`
+- **Applies to**: `AutoMetricInterceptor.exitSpan(java.lang.String,java.lang.String,long,java.lang.Throwable)`, `AutoMetricInterceptor.intercept(java.lang.reflect.Method,java.util.concurrent.Callable<?>)`
 
 ## Thread-Safety Guarantee
 - **Strategy**: THREAD_LOCAL

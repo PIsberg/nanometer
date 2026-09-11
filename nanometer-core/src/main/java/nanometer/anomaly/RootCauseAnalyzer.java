@@ -2,8 +2,6 @@ package nanometer.anomaly;
 
 import nanometer.graph.GraphMetricAggregator;
 import org.jspecify.annotations.Nullable;
-import se.deversity.vibetags.annotations.AICore;
-import se.deversity.vibetags.annotations.AIObservability;
 import se.deversity.vibetags.annotations.AIPublicAPI;
 
 import java.util.ArrayList;
@@ -13,8 +11,6 @@ import java.util.Map;
 /**
  * Automated Root Cause Analysis (RCA) engine inspecting DAG failure cascades and latency bottlenecks.
  */
-@AICore(sensitivity = "High", note = "Automated DAG failure cascade root cause analyzer and diagnosis engine")
-@AIObservability(metrics = {"rca_evaluations_total", "root_causes_identified"})
 @AIPublicAPI(reason = "Root Cause Analysis (RCA) inference API")
 public class RootCauseAnalyzer {
 

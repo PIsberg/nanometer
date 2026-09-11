@@ -13,7 +13,6 @@ import nanometer.storage.MetricQueryService;
 import net.bytebuddy.agent.ByteBuddyAgent;
 import org.jspecify.annotations.Nullable;
 import se.deversity.vibetags.annotations.AICore;
-import se.deversity.vibetags.annotations.AIObservability;
 import se.deversity.vibetags.annotations.AIPublicAPI;
 import se.deversity.vibetags.annotations.AIThreadSafe;
 
@@ -27,7 +26,6 @@ import java.sql.DriverManager;
  */
 @AICore(sensitivity = "High", note = "Main entrypoint and lifecycle manager for Nanometer embedded APM")
 @AIPublicAPI(reason = "Public entrypoint for embedding Nanometer in host applications and libraries")
-@AIObservability(metrics = {"execution_duration_ms", "call_count"}, traces = {"traceId", "spanId"})
 @AIThreadSafe(strategy = AIThreadSafe.Strategy.SYNCHRONIZED, note = "Thread-safe singleton lifecycle methods")
 public class Nanometer {
 

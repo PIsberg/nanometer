@@ -15,8 +15,6 @@ import nanometer.storage.MetricDatabaseFlusher;
 import nanometer.storage.MetricQueryService;
 import nanometer.system.SystemMetricsSampler;
 import org.jspecify.annotations.Nullable;
-import se.deversity.vibetags.annotations.AICore;
-import se.deversity.vibetags.annotations.AIObservability;
 import se.deversity.vibetags.annotations.AIPublicAPI;
 import se.deversity.vibetags.annotations.AIThreadSafe;
 
@@ -38,9 +36,7 @@ import java.util.List;
 /**
  * Lightweight embedded visualizer server providing real-time APM telemetry, flamegraphs, SQL analytics, and root cause analysis.
  */
-@AICore(sensitivity = "High", note = "Embedded zero-dependency HTTP visualizer server with analytics and flamegraphs")
 @AIPublicAPI(reason = "Embedded APM server dashboard lifecycle and REST analytics APIs")
-@AIObservability(metrics = {"http_requests_total"}, traces = {})
 @AIThreadSafe(strategy = AIThreadSafe.Strategy.SYNCHRONIZED, note = "Thread-safe server lifecycle management")
 public class NanometerVisualizerServer {
 

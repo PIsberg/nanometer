@@ -23,7 +23,7 @@ import java.util.concurrent.atomic.LongAdder;
  * losing telemetry is the correct trade against stalling the host.
  */
 @AIPublicAPI(reason = "Continuous OTLP export of collected spans")
-@AIObservability(metrics = {"otlp_batches_exported_total", "otlp_batches_dropped_total"})
+@AIObservability(metrics = {"exportedBatchCount", "droppedBatchCount", "failedBatchCount"})
 public final class OtlpSink implements AutoCloseable {
 
     private final String endpointUrl;

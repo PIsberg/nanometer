@@ -1,7 +1,6 @@
 package nanometer.graph;
 
 import nanometer.model.RelationalMetricEvent;
-import se.deversity.vibetags.annotations.AICore;
 import se.deversity.vibetags.annotations.AIThreadSafe;
 
 import java.util.Collections;
@@ -14,7 +13,6 @@ import java.util.concurrent.atomic.LongAdder;
  * In-memory relational graph aggregator mapping execution topologies,
  * causality relationships, call frequencies, exception cascades, and latencies.
  */
-@AICore(sensitivity = "High", note = "Topology DAG maintaining runtime call hierarchy and error paths")
 @AIThreadSafe(strategy = AIThreadSafe.Strategy.LOCK_FREE, note = "ConcurrentHashMap and LongAdder aggregation")
 public class GraphMetricAggregator {
 

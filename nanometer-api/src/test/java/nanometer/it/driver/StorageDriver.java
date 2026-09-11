@@ -31,26 +31,27 @@ public final class StorageDriver {
                 throw new IllegalStateException("no query service after install");
             }
 
-            // The flusher writes on a 500 ms schedule; poll rather than guess.
+            // Deliberately hand-rolled rather than AsyncAssert.awaitUntil. This class runs in a
+            // forked JVM whose classpath is the shaded uber-JAR and nothing else, which is the
+            // whole point of the test: adding a test library to that classpath would weaken the
+            // only check that the shipped artifact stands on its own.
             long deadline = System.currentTimeMillis() + 20_000;
-            String count = "0";
-            while (System.currentTimeMillis() < deadline) {
-                MetricQueryService.QueryResult result =
-                        query.executeQuery("SELECT count(*) FROM execution_metrics");
-                if (result.error() != null) {
-                    throw new IllegalStateException("query failed: " + result.error());
-                }
-                if (!result.rows().isEmpty()) {
-                    count = result.rows().get(0).get(0);
-                    if (!"0".equals(count)) {
-                        break;
-                    }
-                }
-                Thread.sleep(200);
+            while (System.currentTimeMillis() < deadline && "0".equals(rowCount(query))) {
+                Thread.sleep(100);
             }
-            System.out.println("ROWS=" + count);
+
+            System.out.println("ROWS=" + rowCount(query));
         } finally {
             Nanometer.shutdown();
         }
+    }
+
+    private static String rowCount(MetricQueryService query) {
+        MetricQueryService.QueryResult result =
+                query.executeQuery("SELECT count(*) FROM execution_metrics");
+        if (result.error() != null) {
+            throw new IllegalStateException("query failed: " + result.error());
+        }
+        return result.rows().isEmpty() ? "0" : result.rows().get(0).get(0);
     }
 }

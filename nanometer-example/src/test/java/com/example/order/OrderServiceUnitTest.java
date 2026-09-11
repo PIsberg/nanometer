@@ -1,6 +1,11 @@
 package com.example.order;
 
+import nanometer.Nanometer;
+import nanometer.graph.GraphMetricAggregator;
 import org.junit.jupiter.api.Test;
+import se.deversity.asynctest.AsyncAssert;
+
+import java.time.Duration;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -46,8 +51,27 @@ public class OrderServiceUnitTest {
             }
         });
         thread.start();
-        Thread.sleep(250);
-        thread.interrupt();
-        thread.join(1000);
+        try {
+            // Waiting for the condition instead of sleeping a guessed 250 ms, which asserted
+            // nothing: the test passed whether the application had recorded anything or not.
+            AsyncAssert.awaitUntil(
+                    () -> {
+                        GraphMetricAggregator aggregator = Nanometer.getGraphAggregator();
+                        return aggregator != null && !aggregator.getNodeMetrics().isEmpty();
+                    },
+                    Duration.ofSeconds(20),
+                    "the example application recorded no telemetry");
+
+            GraphMetricAggregator aggregator = Nanometer.getGraphAggregator();
+            assertNotNull(aggregator);
+            assertTrue(aggregator.getNodeMetrics().keySet().stream()
+                            .anyMatch(k -> k.className().startsWith("com.example.order")),
+                    "instrumented application classes are missing from the topology: "
+                            + aggregator.getNodeMetrics().keySet());
+        } finally {
+            thread.interrupt();
+            thread.join(5_000);
+            Nanometer.shutdown();
+        }
     }
 }

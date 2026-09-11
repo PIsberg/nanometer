@@ -4,8 +4,6 @@ import nanometer.graph.GraphMetricAggregator;
 import nanometer.system.SystemMetricsSampler;
 import nanometer.system.SystemMetricsSampler.SystemSnapshot;
 import org.jspecify.annotations.Nullable;
-import se.deversity.vibetags.annotations.AICore;
-import se.deversity.vibetags.annotations.AIObservability;
 import se.deversity.vibetags.annotations.AIPublicAPI;
 
 import java.util.ArrayList;
@@ -15,8 +13,6 @@ import java.util.Map;
 /**
  * Auto-discovery engine inferring visualization graphs, topologies, and charts directly from telemetry.
  */
-@AICore(sensitivity = "High", note = "Automated chart and topology schema discovery engine")
-@AIObservability(metrics = {"chart_discovery_count"})
 @AIPublicAPI(reason = "Public discovery interface for generating graph and system telemetry JSON payloads")
 public class GraphAutoDiscoveryEngine {
 

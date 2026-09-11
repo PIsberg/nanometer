@@ -2,7 +2,6 @@ package nanometer.anomaly;
 
 import nanometer.model.RelationalMetricEvent;
 import org.jspecify.annotations.Nullable;
-import se.deversity.vibetags.annotations.AICore;
 import se.deversity.vibetags.annotations.AIObservability;
 import se.deversity.vibetags.annotations.AIPublicAPI;
 import se.deversity.vibetags.annotations.AIThreadSafe;
@@ -15,8 +14,7 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Statistical anomaly detector tracking rolling online mean and variance (Welford's algorithm).
  */
-@AICore(sensitivity = "High", note = "Statistical 3-sigma latency anomaly and failure burst detector")
-@AIObservability(metrics = {"anomalies_detected_total", "outlier_sigma_score"})
+@AIObservability(metrics = {"observedMs", "meanMs", "stdDevMs", "sigma"})
 @AIPublicAPI(reason = "Statistical anomaly detection interface for real-time telemetry")
 @AIThreadSafe(strategy = AIThreadSafe.Strategy.SYNCHRONIZED, note = "Thread-safe Welford statistic accumulation")
 public class AnomalyDetector {

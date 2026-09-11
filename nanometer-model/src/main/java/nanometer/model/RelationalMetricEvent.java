@@ -1,6 +1,5 @@
 package nanometer.model;
 
-import se.deversity.vibetags.annotations.AICore;
 import se.deversity.vibetags.annotations.AIImmutable;
 import se.deversity.vibetags.annotations.AIObservability;
 
@@ -15,9 +14,8 @@ import se.deversity.vibetags.annotations.AIObservability;
  * event so a consumer can rebuild the call edge without keeping a span-id lookup table. Both are
  * empty strings on a root span.
  */
-@AICore(sensitivity = "High", note = "Core event representation for span-correlated telemetry")
 @AIImmutable(note = "Immutable telemetry record")
-@AIObservability(metrics = {"duration_ns"}, traces = {"traceId", "parentSpanId", "currentSpanId"})
+@AIObservability(metrics = {"durationNs"}, traces = {"traceIdHex", "parentSpanId", "currentSpanId"})
 public record RelationalMetricEvent(
         long traceIdHigh,
         long traceIdLow,

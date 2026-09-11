@@ -1,8 +1,6 @@
 package nanometer.trace;
 
 import org.jspecify.annotations.Nullable;
-import se.deversity.vibetags.annotations.AICore;
-import se.deversity.vibetags.annotations.AIObservability;
 import se.deversity.vibetags.annotations.AIPublicAPI;
 import se.deversity.vibetags.annotations.AIThreadSafe;
 
@@ -11,8 +9,6 @@ import java.util.concurrent.ThreadLocalRandom;
 /**
  * W3C Trace Context propagator implementing standard traceparent parsing and span header injection.
  */
-@AICore(sensitivity = "High", note = "W3C Distributed Trace Context and cross-service span propagator")
-@AIObservability(traces = {"traceparent_propagation"}, metrics = {"w3c_traces_propagated"})
 @AIPublicAPI(reason = "Public interface for W3C distributed tracing context")
 @AIThreadSafe(strategy = AIThreadSafe.Strategy.THREAD_LOCAL, note = "Thread-isolated active trace context management")
 public class W3CTraceContext {

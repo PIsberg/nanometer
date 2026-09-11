@@ -2,8 +2,6 @@ package nanometer.export;
 
 import nanometer.model.RelationalMetricEvent;
 import org.jspecify.annotations.Nullable;
-import se.deversity.vibetags.annotations.AICore;
-import se.deversity.vibetags.annotations.AIObservability;
 import se.deversity.vibetags.annotations.AIPublicAPI;
 
 import java.net.URI;
@@ -18,8 +16,6 @@ import java.util.List;
 /**
  * OpenTelemetry Protocol (OTLP) JSON exporter serializing RelationalMetricEvents into standard OTLP spans.
  */
-@AICore(sensitivity = "High", note = "OpenTelemetry Protocol (OTLP) JSON serializing and HTTP exporter")
-@AIObservability(metrics = {"otlp_exported_spans_total", "otlp_export_duration_ms"})
 @AIPublicAPI(reason = "OTLP span serialization and distributed tracing telemetry export")
 public class OtlpJsonExporter {
 

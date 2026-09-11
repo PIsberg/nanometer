@@ -1,7 +1,6 @@
 package nanometer.sampling;
 
 import nanometer.model.RelationalMetricEvent;
-import se.deversity.vibetags.annotations.AICore;
 import se.deversity.vibetags.annotations.AIObservability;
 import se.deversity.vibetags.annotations.AIPublicAPI;
 import se.deversity.vibetags.annotations.AIThreadSafe;
@@ -16,8 +15,7 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * Dynamic runtime adaptive sampler controlling tail-sampling, sampling rates, and dynamic package inclusions.
  */
-@AICore(sensitivity = "High", note = "Adaptive tail sampler and dynamic package filter controller")
-@AIObservability(metrics = {"sampled_events_ratio", "active_package_filters_count"})
+@AIObservability(metrics = {"sampleRate", "slowThresholdMs", "tailSampling"})
 @AIPublicAPI(reason = "Dynamic sampling and runtime instrumentation configuration API")
 @AIThreadSafe(strategy = AIThreadSafe.Strategy.LOCK_FREE, note = "Thread-safe atomic sampling and concurrent package sets")
 public class AdaptiveSampler {

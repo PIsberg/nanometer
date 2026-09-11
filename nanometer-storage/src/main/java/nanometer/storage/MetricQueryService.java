@@ -1,7 +1,6 @@
 package nanometer.storage;
 
 import org.jspecify.annotations.Nullable;
-import se.deversity.vibetags.annotations.AICore;
 import se.deversity.vibetags.annotations.AIObservability;
 import se.deversity.vibetags.annotations.AIPublicAPI;
 import se.deversity.vibetags.annotations.AIThreadSafe;
@@ -20,8 +19,7 @@ import java.util.Properties;
 /**
  * Embedded SQLite analytics and query service executing safe read-only SQL queries on metrics.db.
  */
-@AICore(sensitivity = "High", note = "Read-only SQLite analytics query service and canned report engine")
-@AIObservability(metrics = {"sql_queries_executed_total", "sql_query_duration_ms"})
+@AIObservability(metrics = {"executionTimeMs"})
 @AIPublicAPI(reason = "Public interface for querying SQLite telemetry metrics database")
 @AIThreadSafe(strategy = AIThreadSafe.Strategy.SYNCHRONIZED, note = "Thread-safe JDBC connection handling")
 public class MetricQueryService {

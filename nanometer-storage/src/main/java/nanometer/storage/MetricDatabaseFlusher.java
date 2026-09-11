@@ -26,7 +26,7 @@ import java.util.concurrent.TimeUnit;
  * Background batch flusher persisting events to an embedded local database (SQLite/WAL).
  */
 @AICore(sensitivity = "High", note = "Background worker managing WAL mode SQLite transaction batches")
-@AIObservability(metrics = {"db_batch_drain_count", "db_write_latency_ms"})
+@AIObservability(metrics = {"bufferDepth", "droppedEventCount"})
 @AIThreadSafe(strategy = AIThreadSafe.Strategy.SYNCHRONIZED, note = "Thread-safe batch draining with single-thread scheduler")
 public class MetricDatabaseFlusher {
 
