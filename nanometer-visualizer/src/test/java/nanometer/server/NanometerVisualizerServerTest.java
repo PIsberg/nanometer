@@ -268,4 +268,20 @@ public class NanometerVisualizerServerTest {
             }
         }
     }
+
+    @Test
+    public void theSystemEndpointReportsWhatTheToolItselfIsDropping() throws Exception {
+        HttpResponse<String> res = client.send(
+                HttpRequest.newBuilder()
+                        .uri(URI.create("http://localhost:" + PORT + "/api/system?token="
+                                + server.getAuthToken()))
+                        .GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(200, res.statusCode());
+        // getDroppedCount() was counted from the start and shown nowhere, so a tool shedding
+        // telemetry still presented a confident dashboard.
+        assertTrue(res.body().contains("droppedEvents"), "body: " + res.body());
+        assertTrue(res.body().contains("bufferDepth"), "body: " + res.body());
+    }
 }

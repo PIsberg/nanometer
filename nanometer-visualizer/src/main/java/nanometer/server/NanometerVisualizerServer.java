@@ -197,8 +197,18 @@ public class NanometerVisualizerServer {
                 exchange.sendResponseHeaders(405, -1);
                 return;
             }
+            // The tool's own health travels with the host's. A profiler that silently sheds spans
+            // while presenting a confident dashboard is the worst failure mode available to it, and
+            // getDroppedCount() was counted and never shown anywhere.
             String json = SystemMetricsSampler.captureSnapshot().toJson();
-            sendJsonResponse(exchange, 200, json);
+            String self = "\"nanometer\":{"
+                    + "\"bufferDepth\":" + bufferDepth() + ","
+                    + "\"droppedEvents\":" + droppedEvents()
+                    + "}";
+            String merged = json.endsWith("}")
+                    ? json.substring(0, json.length() - 1) + "," + self + "}"
+                    : json;
+            sendJsonResponse(exchange, 200, merged);
         }
     }
 
@@ -321,6 +331,14 @@ public class NanometerVisualizerServer {
             List<RelationalMetricEvent> spans = flusher != null ? flusher.recentEvents() : List.of();
             sendJsonResponse(exchange, 200, OtlpJsonExporter.exportToJson("nanometer-service", spans));
         }
+    }
+
+    private int bufferDepth() {
+        return flusher != null ? flusher.getBufferDepth() : 0;
+    }
+
+    private long droppedEvents() {
+        return flusher != null ? flusher.getDroppedEventCount() : 0L;
     }
 
     /**

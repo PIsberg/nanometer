@@ -212,6 +212,19 @@ public class MetricDatabaseFlusher {
         }
     }
 
+    /** Events waiting in the ring buffer right now. */
+    public int getBufferDepth() {
+        return ringBuffer.size();
+    }
+
+    /**
+     * Events the ring buffer shed because it was full. Counted since the beginning but displayed
+     * nowhere, so a tool quietly discarding telemetry still presented a confident dashboard.
+     */
+    public long getDroppedEventCount() {
+        return ringBuffer.getDroppedCount();
+    }
+
     private synchronized void rememberRecent(RelationalMetricEvent event) {
         if (recentEvents.size() == RECENT_EVENT_CAPACITY) {
             recentEvents.removeFirst();

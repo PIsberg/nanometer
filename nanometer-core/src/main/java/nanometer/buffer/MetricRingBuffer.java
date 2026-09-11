@@ -9,6 +9,7 @@ import se.deversity.vibetags.annotations.AIThreadSafe;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.concurrent.atomic.LongAdder;
@@ -18,7 +19,7 @@ import java.util.concurrent.atomic.LongAdder;
  * Uses atomic sequence progression with automatic load shedding when saturated.
  */
 @AICore(sensitivity = "High", note = "Lock-free circular buffer utilizing atomic CAS pointers for zero-allocation telemetry")
-@AIThreadSafe(strategy = AIThreadSafe.Strategy.LOCK_FREE, note = "Lock-free circular buffer with atomic CAS sequences")
+@AIThreadSafe(strategy = AIThreadSafe.Strategy.LOCK_FREE, note = "Many producers, one draining consumer at a time; concurrent drains are turned away")
 public class MetricRingBuffer {
 
     private final int capacity;
@@ -27,6 +28,9 @@ public class MetricRingBuffer {
     private final AtomicLong writeCursor = new AtomicLong(0);
     private final AtomicLong readCursor = new AtomicLong(0);
     private final LongAdder droppedCount = new LongAdder();
+
+    /** Admits one draining thread at a time; see {@link #drainTo(List, int)}. */
+    private final AtomicBoolean draining = new AtomicBoolean(false);
 
     public MetricRingBuffer(int bufferSize) {
         if (Integer.bitCount(bufferSize) != 1) {
@@ -77,27 +81,48 @@ public class MetricRingBuffer {
     /**
      * Drains up to maxElements into the target list.
      */
+    /**
+     * Drains up to maxElements into the target list.
+     *
+     * <p>One consumer at a time. A producer advances the write cursor before storing its payload, so
+     * a consumer can see a claimed-but-empty slot; it stops there and picks the value up on the next
+     * call, which is correct as long as exactly one thread is draining. Two threads draining at once
+     * each advanced the read cursor from the same value, moving it backwards onto an emptied slot:
+     * the buffer then never drained again and every later offer was dropped. Rather than pretend to
+     * be a multi-consumer queue, a second concurrent caller is turned away and returns 0.
+     *
+     * @return the number of events drained, or 0 if another thread is already draining
+     */
     public int drainTo(List<RelationalMetricEvent> target, int maxElements) {
-        int drained = 0;
-        while (drained < maxElements) {
-            long currentRead = readCursor.get();
-            long currentWrite = writeCursor.get();
+        if (!draining.compareAndSet(false, true)) {
+            return 0;
+        }
+        try {
+            int drained = 0;
+            while (drained < maxElements) {
+                long currentRead = readCursor.get();
+                long currentWrite = writeCursor.get();
 
-            if (currentRead >= currentWrite) {
-                break;
-            }
+                if (currentRead >= currentWrite) {
+                    break;
+                }
 
-            int slot = (int) (currentRead & mask);
-            RelationalMetricEvent event = buffer.getAndSet(slot, null);
-            if (event != null) {
+                int slot = (int) (currentRead & mask);
+                RelationalMetricEvent event = buffer.getAndSet(slot, null);
+                if (event == null) {
+                    // A producer has claimed this position and not stored its payload yet. Leave the
+                    // cursor alone; the value is picked up on the next drain.
+                    break;
+                }
+
                 readCursor.lazySet(currentRead + 1);
                 target.add(event);
                 drained++;
-            } else {
-                break;
             }
+            return drained;
+        } finally {
+            draining.set(false);
         }
-        return drained;
     }
 
     public List<RelationalMetricEvent> drainAll() {
