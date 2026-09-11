@@ -32,7 +32,7 @@
         <vibetags.version>1.2.5</vibetags.version>
         <asynctest.version>1.12.0</asynctest.version>
         <junit.version>5.10.2</junit.version>
-        <jspecify.version>1.0.0</jspecify.version>
+        <jspecify.version>1.0.1</jspecify.version>
         <spotbugs.version>4.10.4</spotbugs.version>
         <spotbugs.plugin.version>4.8.3.1</spotbugs.plugin.version>
         <pmd.plugin.version>3.22.0</pmd.plugin.version>
