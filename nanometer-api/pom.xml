@@ -73,7 +73,42 @@
                         <configuration>
                             <shadedArtifactAttached>true</shadedArtifactAttached>
                             <shadedClassifierName>all</shadedClassifierName>
+                            <!--
+                                Shade rewrites the bytecode inside META-INF/versions/N/ entries to
+                                the relocated package but cannot rewrite their entry paths, which
+                                leaves e.g. META-INF/versions/24/net/bytebuddy/.../AsmAttribute.class
+                                declaring nanometer.shaded.bytebuddy...AsmAttribute. Loading such an
+                                entry raises NoClassDefFoundError "wrong name".
+
+                                This uber-JAR is deliberately not a multi-release JAR: its manifest
+                                carries no Multi-Release attribute, so the JVM already ignores every
+                                META-INF/versions/ entry. Dropping them from the relocated artifacts
+                                removes dead bytes rather than changing behaviour, and removes the
+                                trap that adding Multi-Release later would spring.
+
+                                The filter covers every artifact, not just the relocated ones:
+                                org.jspecify also contributes a META-INF/versions/9 module-info and
+                                OSGi metadata that an uber-JAR cannot use either. ShadedJarLayoutIT
+                                pins the invariant.
+                            -->
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/versions/*/module-info.class</exclude>
+                                        <exclude>META-INF/versions/*/OSGI-INF/**</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
                             <relocations>
+                                <relocation>
+                                    <pattern>META-INF.versions.24.net.bytebuddy</pattern>
+                                    <shadedPattern>META-INF.versions.24.nanometer.shaded.bytebuddy</shadedPattern>
+                                </relocation>
+                                <relocation>
+                                    <pattern>META-INF.versions.9.org.sqlite</pattern>
+                                    <shadedPattern>META-INF.versions.9.nanometer.shaded.sqlite</shadedPattern>
+                                </relocation>
                                 <relocation>
                                     <pattern>net.bytebuddy</pattern>
                                     <shadedPattern>nanometer.shaded.bytebuddy</shadedPattern>
@@ -90,10 +125,35 @@
                                         <Agent-Class>nanometer.agent.NanometerAgent</Agent-Class>
                                         <Can-Redefine-Classes>true</Can-Redefine-Classes>
                                         <Can-Retransform-Classes>true</Can-Retransform-Classes>
+                                        <Multi-Release>true</Multi-Release>
                                     </manifestEntries>
                                 </transformer>
                             </transformers>
                         </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!--
+                Integration tests run after package, so they can exercise the shaded uber-JAR that
+                actually ships. The surefire suite only ever sees the unshaded module classpath,
+                which is why a shaded agent that instrumented nothing went unnoticed.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <configuration>
+                    <systemPropertyVariables>
+                        <nanometer.shaded.jar>${project.build.directory}/${project.build.finalName}-all.jar</nanometer.shaded.jar>
+                        <nanometer.it.classes>${project.build.testOutputDirectory}</nanometer.it.classes>
+                    </systemPropertyVariables>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
                     </execution>
                 </executions>
             </plugin>
