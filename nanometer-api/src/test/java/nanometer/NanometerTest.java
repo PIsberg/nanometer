@@ -46,9 +46,11 @@ public class NanometerTest {
                 1, 0, 1, "OrderController", "checkout", 40_000_000L, "NONE", System.currentTimeMillis()
         ));
 
-        // 2. Service call (trace: 1, span: 2, parent: 1)
+        // 2. Service call (trace: 1, span: 2, parent: 1), naming its caller so the edge is drawn
         aggregator.processEvent(new RelationalMetricEvent(
-                1, 1, 2, "PaymentService", "processPayment", 20_000_000L, "PaymentException", System.currentTimeMillis()
+                0L, 1L, 1L, 2L, "PaymentService", "processPayment",
+                "OrderController", "checkout",
+                20_000_000L, "PaymentException", System.currentTimeMillis()
         ));
 
         // Assert nodes

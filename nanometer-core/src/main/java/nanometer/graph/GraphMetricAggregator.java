@@ -4,11 +4,10 @@ import nanometer.model.RelationalMetricEvent;
 import se.deversity.vibetags.annotations.AICore;
 import se.deversity.vibetags.annotations.AIThreadSafe;
 
-import java.util.ArrayList;
 import java.util.Collections;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLongArray;
 import java.util.concurrent.atomic.LongAdder;
 
 /**
@@ -29,10 +28,27 @@ public class GraphMetricAggregator {
     public record EdgeKey(NodeKey source, NodeKey target) {}
 
     public static class NodeStats {
+
+        /** Sub-buckets per power of two; 3 bits gives 8, so about 12% relative error. */
+        static final int SUB_BUCKET_BITS = 3;
+        static final int SUB_BUCKET_COUNT = 1 << SUB_BUCKET_BITS;
+        static final int BUCKET_COUNT = 64 << SUB_BUCKET_BITS;
+
         public final LongAdder callCount = new LongAdder();
         public final LongAdder errorCount = new LongAdder();
         public final LongAdder totalDurationNs = new LongAdder();
-        private final List<Long> samples = Collections.synchronizedList(new ArrayList<>());
+
+        /**
+         * Latency histogram with {@value #SUB_BUCKET_BITS} sub-buckets per power of two, so the
+         * reported percentile is within about 12% of the true value at any magnitude, from
+         * nanoseconds to hours, and never clips.
+         *
+         * <p>This replaces a list capped at the first thousand samples, which froze the reported
+         * percentile to whatever the process happened to see during warm-up and could never
+         * reflect a later regression. It is also smaller: a thousand boxed Longs cost more than
+         * these {@value #BUCKET_COUNT} counters.
+         */
+        private final AtomicLongArray durationBuckets = new AtomicLongArray(BUCKET_COUNT);
 
         public void record(long durationNs, boolean isError) {
             callCount.increment();
@@ -40,9 +56,31 @@ public class GraphMetricAggregator {
             if (isError) {
                 errorCount.increment();
             }
-            if (samples.size() < 1000) {
-                samples.add(durationNs);
+            durationBuckets.incrementAndGet(bucketOf(durationNs));
+        }
+
+        /**
+         * Buckets below {@value #SUB_BUCKET_COUNT} ns are exact; above that, the index is the
+         * magnitude paired with the leading mantissa bits, which keeps relative error constant
+         * rather than letting it double with every octave.
+         */
+        static int bucketOf(long durationNs) {
+            if (durationNs < SUB_BUCKET_COUNT) {
+                return (int) Math.max(0L, durationNs);
             }
+            int octave = 63 - Long.numberOfLeadingZeros(durationNs);
+            int mantissa = (int) ((durationNs >>> (octave - SUB_BUCKET_BITS)) & (SUB_BUCKET_COUNT - 1));
+            return Math.min((octave << SUB_BUCKET_BITS) | mantissa, BUCKET_COUNT - 1);
+        }
+
+        /** Highest duration that lands in this bucket, which is what a percentile reports. */
+        static long upperBoundNs(int bucket) {
+            if (bucket < SUB_BUCKET_COUNT) {
+                return bucket;
+            }
+            int octave = bucket >>> SUB_BUCKET_BITS;
+            long mantissa = SUB_BUCKET_COUNT | (bucket & (SUB_BUCKET_COUNT - 1));
+            return ((mantissa + 1L) << (octave - SUB_BUCKET_BITS)) - 1L;
         }
 
         public double avgDurationMs() {
@@ -51,16 +89,32 @@ public class GraphMetricAggregator {
         }
 
         public double p95Ms() {
-            List<Long> copy;
-            synchronized (samples) {
-                if (samples.isEmpty()) {
-                    return 0.0;
-                }
-                copy = new ArrayList<>(samples);
+            return percentileMs(0.95);
+        }
+
+        /**
+         * Upper bound of the bucket containing the requested percentile, in milliseconds. Reading
+         * is allocation-free and needs no sort, and the answer keeps moving for the life of the
+         * process.
+         */
+        public double percentileMs(double percentile) {
+            long total = 0;
+            for (int i = 0; i < BUCKET_COUNT; i++) {
+                total += durationBuckets.get(i);
             }
-            Collections.sort(copy);
-            int idx = (int) Math.ceil(copy.size() * 0.95) - 1;
-            return copy.get(Math.max(0, idx)) / 1_000_000.0;
+            if (total == 0) {
+                return 0.0;
+            }
+
+            long target = (long) Math.ceil(total * percentile);
+            long cumulative = 0;
+            for (int i = 0; i < BUCKET_COUNT; i++) {
+                cumulative += durationBuckets.get(i);
+                if (cumulative >= target) {
+                    return upperBoundNs(i) / 1_000_000.0;
+                }
+            }
+            return 0.0;
         }
     }
 
@@ -78,24 +132,19 @@ public class GraphMetricAggregator {
 
     private final ConcurrentHashMap<NodeKey, NodeStats> nodeMetrics = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<EdgeKey, EdgeStats> edgeMetrics = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<Long, NodeKey> spanRegistry = new ConcurrentHashMap<>();
 
     public void processEvent(RelationalMetricEvent event) {
         NodeKey currentNode = new NodeKey(event.className(), event.methodName());
         nodeMetrics.computeIfAbsent(currentNode, k -> new NodeStats())
                 .record(event.durationNs(), event.hasException());
 
-        // Register span for causality mapping
-        spanRegistry.put(event.currentSpanId(), currentNode);
-
-        // If this event has a parent span, map the caller -> callee edge
-        if (event.parentSpanId() != 0L) {
-            NodeKey parentNode = spanRegistry.get(event.parentSpanId());
-            if (parentNode != null) {
-                EdgeKey edge = new EdgeKey(parentNode, currentNode);
-                edgeMetrics.computeIfAbsent(edge, k -> new EdgeStats())
-                        .record(event.hasException());
-            }
+        // The event carries its caller's identity, so the edge needs no span-id lookup table.
+        // Keeping one meant retaining every span id for the lifetime of the process.
+        if (event.hasParent()) {
+            NodeKey parentNode = new NodeKey(event.parentClassName(), event.parentMethodName());
+            EdgeKey edge = new EdgeKey(parentNode, currentNode);
+            edgeMetrics.computeIfAbsent(edge, k -> new EdgeStats())
+                    .record(event.hasException());
         }
 
         // If an exception occurred, create an EXCEPTION node edge

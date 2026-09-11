@@ -89,7 +89,7 @@ public class AnomalyDetector {
         if (stats.count >= 10 && stdDev > 0.1) {
             double sigma = (durationMs - mean) / stdDev;
             if (sigma >= sigmaThreshold || !"NONE".equalsIgnoreCase(event.exceptionType())) {
-                anomaly = new AnomalyEvent(key, durationMs, mean, stdDev, sigma, event.exceptionType(), event.timestamp());
+                anomaly = new AnomalyEvent(key, durationMs, mean, stdDev, sigma, event.exceptionType(), event.startTimestamp());
                 if (recentAnomalies.size() >= MAX_ANOMALIES) {
                     recentAnomalies.remove(0);
                 }

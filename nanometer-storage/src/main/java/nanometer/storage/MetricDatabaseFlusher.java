@@ -8,9 +8,11 @@ import se.deversity.vibetags.annotations.AIObservability;
 import se.deversity.vibetags.annotations.AIThreadSafe;
 
 import java.sql.Connection;
+import java.sql.ResultSet;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Executors;
@@ -25,15 +27,30 @@ import java.util.concurrent.TimeUnit;
 @AIThreadSafe(strategy = AIThreadSafe.Strategy.SYNCHRONIZED, note = "Thread-safe batch draining with single-thread scheduler")
 public class MetricDatabaseFlusher {
 
+    /** Bumped whenever the execution_metrics columns change. */
+    static final int SCHEMA_VERSION = 2;
+
+    /** How long rows are kept before the retention job removes them. */
+    public static final Duration DEFAULT_RETENTION = Duration.ofHours(6);
+
     private final Connection connection;
     private final MetricRingBuffer ringBuffer;
     private final GraphMetricAggregator aggregator;
     private final ScheduledExecutorService scheduler;
+    private final Duration retention;
 
     public MetricDatabaseFlusher(Connection connection, MetricRingBuffer ringBuffer, GraphMetricAggregator aggregator) {
+        this(connection, ringBuffer, aggregator, DEFAULT_RETENTION);
+    }
+
+    public MetricDatabaseFlusher(Connection connection,
+                                 MetricRingBuffer ringBuffer,
+                                 GraphMetricAggregator aggregator,
+                                 Duration retention) {
         this.connection = connection;
         this.ringBuffer = ringBuffer;
         this.aggregator = aggregator;
+        this.retention = retention;
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "nanometer-db-flusher");
             t.setDaemon(true);
@@ -49,28 +66,68 @@ public class MetricDatabaseFlusher {
             stmt.execute("PRAGMA journal_mode=WAL;");
             stmt.execute("PRAGMA synchronous=NORMAL;");
 
+            // CREATE TABLE IF NOT EXISTS silently accepts a database written by an older schema,
+            // so the version is checked explicitly. This store is a rolling telemetry cache with a
+            // retention window, not a system of record, so a mismatch is resolved by recreating the
+            // table rather than by writing a migration for data that is about to expire anyway.
+            int found = readSchemaVersion(stmt);
+            if (found != 0 && found != SCHEMA_VERSION) {
+                System.err.println("[Nanometer] metrics.db is schema v" + found + ", this build writes v"
+                        + SCHEMA_VERSION + "; recreating execution_metrics and discarding its rows");
+                stmt.execute("DROP TABLE IF EXISTS execution_metrics;");
+            }
+
             stmt.execute("""
                 CREATE TABLE IF NOT EXISTS execution_metrics (
-                    timestamp INTEGER,
-                    trace_id INTEGER,
+                    start_timestamp INTEGER,
+                    trace_id TEXT,
                     parent_span_id INTEGER,
                     span_id INTEGER,
                     class_name TEXT,
                     method_name TEXT,
-                    duration_ms REAL,
+                    parent_class_name TEXT,
+                    parent_method_name TEXT,
+                    duration_ns INTEGER,
                     exception_type TEXT
                 );
             """);
 
-            stmt.execute("CREATE INDEX IF NOT EXISTS idx_exec_ts ON execution_metrics(timestamp);");
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_exec_ts ON execution_metrics(start_timestamp);");
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_exec_method ON execution_metrics(class_name, method_name);");
+            stmt.execute("PRAGMA user_version=" + SCHEMA_VERSION + ";");
         } catch (SQLException e) {
             System.err.println("[Nanometer] Schema init error: " + e.getMessage());
         }
     }
 
+    private static int readSchemaVersion(Statement stmt) throws SQLException {
+        try (ResultSet rs = stmt.executeQuery("PRAGMA user_version;")) {
+            return rs.next() ? rs.getInt(1) : 0;
+        }
+    }
+
+    /**
+     * Deletes rows outside the retention window. Without this the table grows for as long as the
+     * host process runs; at ten thousand spans a second that is roughly 36 million rows an hour,
+     * written into the host application working directory.
+     */
+    synchronized void pruneExpiredRows() {
+        long cutoff = System.currentTimeMillis() - retention.toMillis();
+        try (PreparedStatement stmt = connection.prepareStatement(
+                "DELETE FROM execution_metrics WHERE start_timestamp < ?")) {
+            stmt.setLong(1, cutoff);
+            int deleted = stmt.executeUpdate();
+            if (deleted > 0 && !connection.getAutoCommit()) {
+                connection.commit();
+            }
+        } catch (SQLException e) {
+            System.err.println("[Nanometer] Retention prune error: " + e.getMessage());
+        }
+    }
+
     private void startWorker() {
         scheduler.scheduleAtFixedRate(this::flushBatch, 500, 500, TimeUnit.MILLISECONDS);
+        scheduler.scheduleAtFixedRate(this::pruneExpiredRows, 1, 1, TimeUnit.MINUTES);
     }
 
     public synchronized void flushBatch() {
@@ -90,17 +147,19 @@ public class MetricDatabaseFlusher {
         try {
             connection.setAutoCommit(false);
             try (PreparedStatement stmt = connection.prepareStatement("""
-                INSERT INTO execution_metrics VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO execution_metrics VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """)) {
                 for (RelationalMetricEvent event : batch) {
-                    stmt.setLong(1, event.timestamp());
-                    stmt.setLong(2, event.traceId());
+                    stmt.setLong(1, event.startTimestamp());
+                    stmt.setString(2, event.traceIdHex());
                     stmt.setLong(3, event.parentSpanId());
                     stmt.setLong(4, event.currentSpanId());
                     stmt.setString(5, event.className());
                     stmt.setString(6, event.methodName());
-                    stmt.setDouble(7, event.durationMs());
-                    stmt.setString(8, event.exceptionType());
+                    stmt.setString(7, event.parentClassName());
+                    stmt.setString(8, event.parentMethodName());
+                    stmt.setLong(9, event.durationNs());
+                    stmt.setString(10, event.exceptionType());
                     stmt.addBatch();
                 }
                 stmt.executeBatch();

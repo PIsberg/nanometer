@@ -23,6 +23,15 @@ import java.util.List;
 @AIPublicAPI(reason = "OTLP span serialization and distributed tracing telemetry export")
 public class OtlpJsonExporter {
 
+    /**
+     * One client for the life of the process. Building an HttpClient per export allocated a
+     * selector thread and an executor each time, which for a periodic exporter is a thread leak
+     * that only the garbage collector cleans up.
+     */
+    private static final HttpClient CLIENT = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(3))
+            .build();
+
     public static String exportToJson(String serviceName, List<RelationalMetricEvent> events) {
         StringBuilder sb = new StringBuilder();
         sb.append("{\"resourceSpans\":[{\"resource\":{\"attributes\":[");
@@ -32,9 +41,9 @@ public class OtlpJsonExporter {
 
         List<String> spans = new ArrayList<>();
         for (RelationalMetricEvent e : events) {
-            long startNanos = e.timestamp() * 1_000_000L;
+            long startNanos = e.startTimestamp() * 1_000_000L;
             long endNanos = startNanos + e.durationNs();
-            String traceIdHex = String.format("%032x", e.traceId());
+            String traceIdHex = e.traceIdHex();
             String spanIdHex = String.format("%016x", e.currentSpanId());
             String parentSpanIdHex = e.parentSpanId() > 0 ? String.format("%016x", e.parentSpanId()) : "";
             boolean isErr = !"NONE".equalsIgnoreCase(e.exceptionType());
@@ -74,10 +83,6 @@ public class OtlpJsonExporter {
         }
         try {
             String payload = exportToJson(serviceName, events);
-            HttpClient client = HttpClient.newBuilder()
-                    .connectTimeout(Duration.ofSeconds(3))
-                    .build();
-
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(endpointUrl))
                     .header("Content-Type", "application/json")
@@ -85,7 +90,7 @@ public class OtlpJsonExporter {
                     .POST(HttpRequest.BodyPublishers.ofString(payload, StandardCharsets.UTF_8))
                     .build();
 
-            HttpResponse<Void> response = client.send(request, HttpResponse.BodyHandlers.discarding());
+            HttpResponse<Void> response = CLIENT.send(request, HttpResponse.BodyHandlers.discarding());
             return response.statusCode() >= 200 && response.statusCode() < 300;
         } catch (Exception e) {
             return false;

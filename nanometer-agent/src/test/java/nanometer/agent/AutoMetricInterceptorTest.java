@@ -97,8 +97,35 @@ public class AutoMetricInterceptorTest {
         RelationalMetricEvent child = events.get(0);
         RelationalMetricEvent parent = events.get(1);
 
-        assertEquals(parent.traceId(), child.traceId());
+        assertEquals(parent.traceIdHex(), child.traceIdHex(),
+                "a nested call shares the caller's 128-bit trace id");
         assertEquals(parent.currentSpanId(), child.parentSpanId());
+
+        assertTrue(child.hasParent(), "the nested span carries its caller's identity");
+        assertEquals(parent.className(), child.parentClassName());
+        assertEquals(parent.methodName(), child.parentMethodName());
+
+        assertFalse(parent.hasParent(), "the outermost span has no caller to name");
+        assertEquals(0L, parent.parentSpanId());
+    }
+
+    @Test
+    public void spanStartTimestampPrecedesTheRecordedEnd() throws Throwable {
+        long before = System.currentTimeMillis();
+        Method method = TestService.class.getMethod("successfulCall");
+        TestService instance = new TestService();
+
+        AutoMetricInterceptor.intercept(method, instance::successfulCall);
+        long after = System.currentTimeMillis();
+
+        RelationalMetricEvent event = buffer.drainAll().get(0);
+
+        // The timestamp used to be taken at exit and read back as the start, which shifted every
+        // exported span later by its own duration.
+        assertTrue(event.startTimestamp() >= before,
+                "start timestamp " + event.startTimestamp() + " predates the call");
+        assertTrue(event.startTimestamp() <= after,
+                "start timestamp " + event.startTimestamp() + " is after the call returned");
     }
 
     @Test

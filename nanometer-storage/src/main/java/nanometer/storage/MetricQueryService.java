@@ -92,7 +92,7 @@ public class MetricQueryService {
     }
 
     public static String getTopSlowestQuery() {
-        return "SELECT class_name, method_name, count(*) as calls, round(avg(duration_ms), 2) as avg_ms, round(max(duration_ms), 2) as max_ms FROM execution_metrics GROUP BY class_name, method_name ORDER BY avg_ms DESC LIMIT 10;";
+        return "SELECT class_name, method_name, count(*) as calls, round(avg(duration_ns) / 1e6, 2) as avg_ms, round(max(duration_ns) / 1e6, 2) as max_ms FROM execution_metrics GROUP BY class_name, method_name ORDER BY avg_ms DESC LIMIT 10;";
     }
 
     public static String getExceptionBreakdownQuery() {
@@ -100,7 +100,7 @@ public class MetricQueryService {
     }
 
     public static String getThroughputTimelineQuery() {
-        return "SELECT strftime('%Y-%m-%d %H:%M:%S', timestamp / 1000, 'unixepoch') as time_bucket, count(*) as call_count FROM execution_metrics GROUP BY time_bucket ORDER BY time_bucket DESC LIMIT 20;";
+        return "SELECT strftime('%Y-%m-%d %H:%M:%S', start_timestamp / 1000, 'unixepoch') as time_bucket, count(*) as call_count FROM execution_metrics GROUP BY time_bucket ORDER BY time_bucket DESC LIMIT 20;";
     }
 
     private static String escapeJson(@Nullable String s) {
