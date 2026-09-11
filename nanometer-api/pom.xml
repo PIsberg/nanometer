@@ -100,25 +100,38 @@
                                     </excludes>
                                 </filter>
                             </filters>
+                            <!--
+                                org.sqlite is deliberately NOT relocated. sqlite-jdbc is a JNI
+                                library: its native binary exports symbols named for the original
+                                package, Java_org_sqlite_core_NativeDB_*, and looks its classes up
+                                by that name. Renaming the Java side makes the JVM search for
+                                symbols that do not exist, so the shaded JAR failed at the first
+                                query with NoClassDefFoundError: org/sqlite/core/NativeDB. A
+                                native library cannot be relocated by a bytecode rewriter.
+
+                                Byte Buddy is pure Java and stays relocated, which is where the
+                                real conflict risk lies: a host application running its own agent
+                                would otherwise meet two copies of it.
+                            -->
                             <relocations>
                                 <relocation>
                                     <pattern>META-INF.versions.24.net.bytebuddy</pattern>
                                     <shadedPattern>META-INF.versions.24.nanometer.shaded.bytebuddy</shadedPattern>
                                 </relocation>
                                 <relocation>
-                                    <pattern>META-INF.versions.9.org.sqlite</pattern>
-                                    <shadedPattern>META-INF.versions.9.nanometer.shaded.sqlite</shadedPattern>
-                                </relocation>
-                                <relocation>
                                     <pattern>net.bytebuddy</pattern>
                                     <shadedPattern>nanometer.shaded.bytebuddy</shadedPattern>
                                 </relocation>
-                                <relocation>
-                                    <pattern>org.sqlite</pattern>
-                                    <shadedPattern>nanometer.shaded.sqlite</shadedPattern>
-                                </relocation>
                             </relocations>
                             <transformers>
+                                <!--
+                                    Rewrites META-INF/services entries through the relocators. Without
+                                    it the SQLite driver's service file still named org.sqlite.JDBC, a
+                                    class relocation had already renamed, so DriverManager reported
+                                    "No suitable driver found for jdbc:sqlite:" and the embedded store
+                                    never worked from the shaded JAR. ShadedJarLayoutIT pins it.
+                                -->
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                     <manifestEntries>
                                         <Premain-Class>nanometer.agent.NanometerAgent</Premain-Class>

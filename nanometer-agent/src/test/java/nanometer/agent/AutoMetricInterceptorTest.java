@@ -297,6 +297,36 @@ public class AutoMetricInterceptorTest {
         assertNotEquals("00000000000000000000000000000000", event.traceIdHex());
     }
 
+    @Test
+    public void aLongRunningRootStillPublishesItsSpans() throws Throwable {
+        // Found by running a service under the agent rather than by the suite: tail sampling waits
+        // for the root to close, and a service whose main or accept loop is instrumented has a root
+        // that never closes, so nothing reached the dashboard at all. Past the bound a trace stops
+        // being treated as a request and its spans flow.
+        long original = AutoMetricInterceptor.getMaxTraceBufferNanos();
+        AutoMetricInterceptor.setMaxTraceBufferNanos(1L);
+        try {
+            Method method = TestService.class.getMethod("successfulCall");
+            TestService instance = new TestService();
+
+            // The root stays open while inner calls complete underneath it.
+            AutoMetricInterceptor.intercept(method, () -> {
+                for (int i = 0; i < 5; i++) {
+                    nested(method, instance::successfulCall);
+                }
+                assertTrue(buffer.size() > 0,
+                        "spans must become visible while the root is still open; buffering them "
+                                + "until it closes hides everything for a service that never returns");
+                return "SUCCESS";
+            });
+
+            assertTrue(AutoMetricInterceptor.getDegradedTraceCount() > 0,
+                    "the fallback should be counted, not silent");
+        } finally {
+            AutoMetricInterceptor.setMaxTraceBufferNanos(original);
+        }
+    }
+
     /** Callable.call declares Exception, but intercept declares Throwable; bridge the two. */
     private static Object nested(Method method, java.util.concurrent.Callable<?> inner) throws Exception {
         try {

@@ -40,8 +40,38 @@ public class AutoMetricInterceptor {
 
     private static final int INITIAL_STACK_DEPTH = 64;
 
-    /** Spans buffered for one trace before it is force-kept and emitted incrementally. */
+    /** Spans buffered for one trace before it stops being treated as a request. */
     private static final int MAX_PENDING_SPANS = 2048;
+
+    /**
+     * How long a trace may stay open before it stops being treated as a request.
+     *
+     * <p>Tail sampling buffers a trace until its root closes. That is right for request-shaped work
+     * and wrong for a root that never returns: a service whose {@code main} or accept loop is
+     * instrumented would buffer every span for the life of the process and show nothing at all.
+     * Past this bound the trace degrades to per-span sampling and its spans flow immediately, so
+     * the dashboard stays live at the cost of trace-level sampling for that one trace.
+     */
+    private static volatile long maxTraceBufferNanos = Long.getLong(
+            "nanometer.trace.maxBufferNanos", 1_000_000_000L);
+
+    /** Package-private so a test can exercise degradation without waiting a real second. */
+    static void setMaxTraceBufferNanos(long nanos) {
+        maxTraceBufferNanos = nanos;
+    }
+
+    static long getMaxTraceBufferNanos() {
+        return maxTraceBufferNanos;
+    }
+
+    /** Traces that outgrew the request-shaped assumption, counted so the cost is visible. */
+    private static final java.util.concurrent.atomic.LongAdder DEGRADED_TRACES =
+            new java.util.concurrent.atomic.LongAdder();
+
+    /** Number of traces that fell back to per-span sampling because they were too long or too big. */
+    public static long getDegradedTraceCount() {
+        return DEGRADED_TRACES.sum();
+    }
 
     /**
      * Per-thread stack of open spans. Pre-sized and reused so a steady-state call allocates
@@ -77,11 +107,11 @@ public class AutoMetricInterceptor {
         private long maxDurationNs;
 
         /**
-         * Set when a trace outgrows {@link #MAX_PENDING_SPANS}. Such a trace is kept in full and
-         * emitted as it goes, trading the sample rate for completeness and a bounded buffer. A root
-         * that never returns, a server accept loop for instance, would otherwise buffer forever.
+         * Set when a trace stops looking like a request, by span count or by age. Its spans are
+         * emitted as they complete under a per-span decision, because there is no root close to
+         * wait for and holding them back would hide the telemetry entirely.
          */
-        private boolean forceKeep;
+        private boolean degraded;
 
         /** Caller's span id when this trace continues one from another process; 0 otherwise. */
         private long remoteParentSpanId;
@@ -91,7 +121,7 @@ public class AutoMetricInterceptor {
             pending.clear();
             anyError = false;
             maxDurationNs = 0L;
-            forceKeep = false;
+            degraded = false;
         }
 
         void push(long spanId, String className, String methodName) {
@@ -240,19 +270,25 @@ public class AutoMetricInterceptor {
             stack.maxDurationNs = durationNs;
         }
 
-        // Tail sampling is a decision about a trace, so spans wait for their root to close.
-        if (stack.forceKeep) {
-            buffer.offer(event);
+        // Tail sampling is a decision about a trace, so spans wait for their root to close, unless
+        // this trace has stopped behaving like a request.
+        if (stack.degraded) {
+            if (sampler.shouldSample(durationNs, exceptionType)) {
+                buffer.offer(event);
+            }
         } else {
             stack.pending.add(event);
-            if (stack.pending.size() >= MAX_PENDING_SPANS) {
-                stack.forceKeep = true;
+            boolean tooMany = stack.pending.size() >= MAX_PENDING_SPANS;
+            boolean tooOld = (System.nanoTime() - stack.rootNanos) >= maxTraceBufferNanos;
+            if (frame > 0 && (tooMany || tooOld)) {
+                stack.degraded = true;
+                DEGRADED_TRACES.increment();
                 emitPending(stack);
             }
         }
 
         if (frame == 0) {
-            if (!stack.forceKeep) {
+            if (!stack.degraded) {
                 if (sampler.shouldSampleTrace(stack.maxDurationNs, stack.anyError)) {
                     emitPending(stack);
                 } else {

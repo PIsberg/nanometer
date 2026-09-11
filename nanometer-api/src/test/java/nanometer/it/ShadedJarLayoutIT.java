@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -21,6 +22,7 @@ import java.util.jar.Manifest;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -155,7 +157,7 @@ class ShadedJarLayoutIT {
     }
 
     @Test
-    @DisplayName("relocates every shaded dependency class out of its original package")
+    @DisplayName("relocates Byte Buddy out of its original package")
     void relocationIsComplete() throws IOException {
         List<String> unrelocated = new ArrayList<>();
 
@@ -168,16 +170,63 @@ class ShadedJarLayoutIT {
                 }
                 // Versioned entries count too: their paths are relocated separately from the base
                 // ones, so a relocation that covers only the base JAR would slip through here.
-                String path = stripVersionPrefix(name);
-                if (path.startsWith("net/bytebuddy/") || path.startsWith("org/sqlite/")) {
+                if (stripVersionPrefix(name).startsWith("net/bytebuddy/")) {
                     unrelocated.add(name);
                 }
             }
         }
 
         assertEquals(List.of(), unrelocated,
-                "shaded JAR leaks unrelocated dependency classes, which defeats the "
-                        + "zero-classpath-pollution guarantee");
+                "Byte Buddy must be relocated: a host running its own agent would otherwise meet "
+                        + "two copies of it");
+    }
+
+    @Test
+    @DisplayName("leaves the JNI SQLite driver in its original package")
+    void sqliteIsDeliberatelyNotRelocated() throws IOException {
+        boolean originalPackagePresent = false;
+        boolean relocatedPackagePresent = false;
+
+        try (JarFile jar = new JarFile(shadedJar.toFile())) {
+            Enumeration<JarEntry> entries = jar.entries();
+            while (entries.hasMoreElements()) {
+                String name = entries.nextElement().getName();
+                if (name.startsWith("org/sqlite/")) {
+                    originalPackagePresent = true;
+                } else if (name.startsWith("nanometer/shaded/sqlite/")) {
+                    relocatedPackagePresent = true;
+                }
+            }
+        }
+
+        assertTrue(originalPackagePresent, "the SQLite driver is missing from the uber-JAR");
+        // sqlite-jdbc is a JNI library: its native binary exports Java_org_sqlite_core_NativeDB_*
+        // and resolves its classes by that name. Relocating the Java side made the JVM look for
+        // symbols that do not exist, and the first query died with
+        // NoClassDefFoundError: org/sqlite/core/NativeDB.
+        assertFalse(relocatedPackagePresent,
+                "org.sqlite was relocated; a native library cannot be renamed by a bytecode "
+                        + "rewriter and the embedded store stops working");
+    }
+
+    @Test
+    @DisplayName("points the JDBC service entry at a class that exists in the JAR")
+    void serviceEntriesNameLoadableClasses() throws IOException {
+        try (JarFile jar = new JarFile(shadedJar.toFile())) {
+            JarEntry entry = jar.getJarEntry("META-INF/services/java.sql.Driver");
+            assertNotNull(entry, "no JDBC driver service entry, so DriverManager finds no driver");
+
+            String declared;
+            try (InputStream in = jar.getInputStream(entry)) {
+                declared = new String(in.readAllBytes(), StandardCharsets.UTF_8).trim();
+            }
+
+            // Relocation rewrites class files but not service files unless shade is told to, which
+            // left this naming org.sqlite.JDBC after that class had been renamed. The symptom was
+            // "No suitable driver found for jdbc:sqlite:" from a JAR that contained the driver.
+            assertNotNull(jar.getJarEntry(declared.replace('.', '/') + ".class"),
+                    "service entry names " + declared + ", which is not in this JAR");
+        }
     }
 
     @Test
