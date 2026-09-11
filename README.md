@@ -1,6 +1,6 @@
 # ⚡ Nanometer: Zero-Dependency Embedded Observability Toolkit
 
-> **Zero-boilerplate, zero-allocation APM and automated dependency topology graph inference for Java libraries and microservices.**
+> **Zero-boilerplate APM and automated dependency topology graph inference for Java libraries and microservices, with an allocation-free ring buffer on the instrumented path.**
 
 [![CI Matrix (JDK 21, 25, 26 | Maven & Gradle)](https://github.com/PIsberg/nanometer/actions/workflows/ci.yml/badge.svg)](https://github.com/PIsberg/nanometer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -19,7 +19,7 @@
 * **Zero-Allocation Hot Path**: Lock-free pre-allocated `MetricRingBuffer` (Disruptor pattern) with automatic load shedding under extreme traffic (< 50ns latency target).
 * **Automated Causality & Topology Inference**: Automatically tracks execution spans across threads to build directed method caller-callee graphs and exception cascades.
 * **Embedded Local Storage (WAL)**: Asynchronous micro-batching into local SQLite in WAL mode (`.nanometer/metrics.db`).
-* **Interactive Web Dashboard**: Embedded JDK `HttpServer` (zero external dependencies) serving real-time telemetry, multi-round historical comparison, and high-density topologies at `http://localhost:9090`.
+* **Interactive Web Dashboard**: Embedded JDK `HttpServer` (zero external dependencies) serving real-time telemetry, multi-round historical comparison, and high-density topologies. Bound to loopback and gated by a token printed at startup, as `http://127.0.0.1:9090/?token=...`.
 * **Hardware & JVM Telemetry**: Built-in `SystemMetricsSampler` tracking Process/System CPU %, Heap & Non-Heap Memory, active threads, and uptime.
 * **Dual Build System**: First-class build support for both **Maven** and **Gradle** across **JDK 21, 25, 26**.
 * **AI Governance & Guardrails**: Integrated with [VibeTags](https://github.com/PIsberg/vibetags) providing tiered guardrails for both Claude (`CLAUDE.md`, `.claude/rules/*.md`) and Gemini (`GEMINI.md`).
@@ -29,7 +29,7 @@
 
 ## 🖥️ What the GUI Supports
 
-The embedded Nanometer dashboard ([http://localhost:9090](http://localhost:9090)) provides an enterprise APM experience with zero configuration:
+The embedded Nanometer dashboard, reachable on loopback at the tokenised URL printed at startup, provides an enterprise APM experience with zero configuration:
 
 ### 1. Multi-Round Simulation & Historical Snapshotting
 * **Round History Management**: Capture snapshots across distinct load testing rounds (e.g. *Round 1: Baseline Warmup*, *Round 2: Peak Stress*, *Round 3: Chaos/Degraded*).

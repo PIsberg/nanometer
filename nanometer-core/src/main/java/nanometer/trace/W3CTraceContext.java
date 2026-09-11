@@ -6,7 +6,6 @@ import se.deversity.vibetags.annotations.AIObservability;
 import se.deversity.vibetags.annotations.AIPublicAPI;
 import se.deversity.vibetags.annotations.AIThreadSafe;
 
-import java.util.HexFormat;
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
@@ -95,15 +94,53 @@ public class W3CTraceContext {
 
         try {
             String traceHex = parts[1];
-            long high = HexFormat.of().parseHex(traceHex.substring(0, 16))[0]; // fallback parse
             long traceHigh = Long.parseUnsignedLong(traceHex.substring(0, 16), 16);
             long traceLow = Long.parseUnsignedLong(traceHex.substring(16, 32), 16);
-            long spanId = Long.parseUnsignedLong(parts[2], 16);
+            long remoteSpanId = Long.parseUnsignedLong(parts[2], 16);
             boolean sampled = "01".equals(parts[3]);
 
-            return new TraceSpan(traceHigh, traceLow, spanId, 0, sampled);
+            if (traceHigh == 0L && traceLow == 0L) {
+                return null; // all-zero trace id is invalid per the spec
+            }
+            if (remoteSpanId == 0L) {
+                return null; // all-zero parent id is invalid per the spec
+            }
+
+            // The span id in an inbound traceparent identifies the CALLER. It becomes this side's
+            // parent; work here gets a fresh span id. Returning it as our own spanId, as this method
+            // used to, made a continued trace overwrite the caller's span instead of descending
+            // from it.
+            long localSpanId = ThreadLocalRandom.current().nextLong(1, Long.MAX_VALUE);
+            return new TraceSpan(traceHigh, traceLow, localSpanId, remoteSpanId, sampled);
         } catch (Exception e) {
             return null;
         }
+    }
+
+    /**
+     * Adopts an inbound {@code traceparent} as the current context, so spans opened on this thread
+     * join the caller's trace. Returns the adopted span, or {@code null} if the header was absent or
+     * malformed, in which case the caller should start a root span instead.
+     */
+    public static @Nullable TraceSpan adoptIncoming(@Nullable String traceParentHeader) {
+        TraceSpan continued = parseTraceParent(traceParentHeader);
+        if (continued != null) {
+            CURRENT_SPAN.set(continued);
+        }
+        return continued;
+    }
+
+    /**
+     * The header value to attach to an outbound request, or {@code null} when this thread is not in
+     * a trace. Nothing called this before, which is why traces stopped at the process boundary.
+     */
+    public static @Nullable String outgoingTraceParent() {
+        TraceSpan current = CURRENT_SPAN.get();
+        return current != null ? current.toTraceParent() : null;
+    }
+
+    /** Clears the context for this thread. Pair with {@link #adoptIncoming} at a request boundary. */
+    public static void clear() {
+        CURRENT_SPAN.remove();
     }
 }

@@ -4,6 +4,7 @@ import nanometer.buffer.MetricRingBuffer;
 import nanometer.model.RelationalMetricEvent;
 import nanometer.profiling.JfrProfileSampler;
 import nanometer.sampling.AdaptiveSampler;
+import nanometer.trace.W3CTraceContext;
 import net.bytebuddy.asm.Advice;
 import net.bytebuddy.implementation.bind.annotation.Origin;
 import net.bytebuddy.implementation.bind.annotation.RuntimeType;
@@ -14,6 +15,8 @@ import se.deversity.vibetags.annotations.AIPerformance;
 import se.deversity.vibetags.annotations.AIThreadSafe;
 
 import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -36,6 +39,9 @@ import java.util.concurrent.ThreadLocalRandom;
 public class AutoMetricInterceptor {
 
     private static final int INITIAL_STACK_DEPTH = 64;
+
+    /** Spans buffered for one trace before it is force-kept and emitted incrementally. */
+    private static final int MAX_PENDING_SPANS = 2048;
 
     /**
      * Per-thread stack of open spans. Pre-sized and reused so a steady-state call allocates
@@ -61,6 +67,32 @@ public class AutoMetricInterceptor {
          */
         private long rootWallMillis;
         private long rootNanos;
+
+        /**
+         * Spans of the current trace, held until the root closes so the keep-or-drop decision can be
+         * made for the trace as a whole rather than per span.
+         */
+        private final List<RelationalMetricEvent> pending = new ArrayList<>();
+        private boolean anyError;
+        private long maxDurationNs;
+
+        /**
+         * Set when a trace outgrows {@link #MAX_PENDING_SPANS}. Such a trace is kept in full and
+         * emitted as it goes, trading the sample rate for completeness and a bounded buffer. A root
+         * that never returns, a server accept loop for instance, would otherwise buffer forever.
+         */
+        private boolean forceKeep;
+
+        /** Caller's span id when this trace continues one from another process; 0 otherwise. */
+        private long remoteParentSpanId;
+
+        void resetTrace() {
+            remoteParentSpanId = 0L;
+            pending.clear();
+            anyError = false;
+            maxDurationNs = 0L;
+            forceKeep = false;
+        }
 
         void push(long spanId, String className, String methodName) {
             if (depth == spanIds.length) {
@@ -120,20 +152,32 @@ public class AutoMetricInterceptor {
         SpanStack stack = SPANS.get();
         long startNanos = System.nanoTime();
 
+        long spanId = ThreadLocalRandom.current().nextLong(1, Long.MAX_VALUE);
+
         if (stack.depth == 0) {
-            ThreadLocalRandom rnd = ThreadLocalRandom.current();
-            long high = rnd.nextLong();
-            long low = rnd.nextLong();
-            if (high == 0L && low == 0L) {
-                low = 1L;
+            // Join an inbound distributed trace when one was adopted for this thread, so a trace
+            // crosses the process boundary instead of restarting here.
+            W3CTraceContext.TraceSpan inbound = W3CTraceContext.current();
+            if (inbound != null) {
+                stack.traceIdHigh = inbound.traceIdHigh();
+                stack.traceIdLow = inbound.traceIdLow();
+                spanId = inbound.spanId();
+                stack.remoteParentSpanId = inbound.parentSpanId();
+            } else {
+                ThreadLocalRandom rnd = ThreadLocalRandom.current();
+                long high = rnd.nextLong();
+                long low = rnd.nextLong();
+                if (high == 0L && low == 0L) {
+                    low = 1L;
+                }
+                stack.traceIdHigh = high;
+                stack.traceIdLow = low;
+                stack.remoteParentSpanId = 0L;
             }
-            stack.traceIdHigh = high;
-            stack.traceIdLow = low;
             stack.rootWallMillis = System.currentTimeMillis();
             stack.rootNanos = startNanos;
         }
 
-        long spanId = ThreadLocalRandom.current().nextLong(1, Long.MAX_VALUE);
         stack.push(spanId, className, methodName);
         return startNanos;
     }
@@ -160,17 +204,13 @@ public class AutoMetricInterceptor {
         stack.classNames[frame] = null;
         stack.methodNames[frame] = null;
 
-        long parentSpanId = frame > 0 ? stack.spanIds[frame - 1] : 0L;
+        long parentSpanId = frame > 0 ? stack.spanIds[frame - 1] : stack.remoteParentSpanId;
         String parentClassName = frame > 0 ? stack.classNames[frame - 1] : RelationalMetricEvent.NO_PARENT;
         String parentMethodName = frame > 0 ? stack.methodNames[frame - 1] : RelationalMetricEvent.NO_PARENT;
 
         long traceIdHigh = stack.traceIdHigh;
         long traceIdLow = stack.traceIdLow;
         long startTimestamp = stack.rootWallMillis + (startNanos - stack.rootNanos) / 1_000_000L;
-
-        if (frame == 0) {
-            SPANS.remove();
-        }
 
         String exceptionType = thrown == null
                 ? RelationalMetricEvent.NO_EXCEPTION
@@ -181,22 +221,55 @@ public class AutoMetricInterceptor {
             profileSampler.recordStackTrace(Thread.currentThread().getStackTrace(), durationNs);
         }
 
-        // Adaptive tail sampling check
-        if (sampler.shouldSample(durationNs, exceptionType)) {
-            buffer.offer(new RelationalMetricEvent(
-                    traceIdHigh,
-                    traceIdLow,
-                    parentSpanId,
-                    currentSpanId,
-                    className,
-                    methodName,
-                    parentClassName,
-                    parentMethodName,
-                    durationNs,
-                    exceptionType,
-                    startTimestamp
-            ));
+        RelationalMetricEvent event = new RelationalMetricEvent(
+                traceIdHigh,
+                traceIdLow,
+                parentSpanId,
+                currentSpanId,
+                className,
+                methodName,
+                parentClassName,
+                parentMethodName,
+                durationNs,
+                exceptionType,
+                startTimestamp
+        );
+
+        stack.anyError |= !RelationalMetricEvent.NO_EXCEPTION.equals(exceptionType);
+        if (durationNs > stack.maxDurationNs) {
+            stack.maxDurationNs = durationNs;
         }
+
+        // Tail sampling is a decision about a trace, so spans wait for their root to close.
+        if (stack.forceKeep) {
+            buffer.offer(event);
+        } else {
+            stack.pending.add(event);
+            if (stack.pending.size() >= MAX_PENDING_SPANS) {
+                stack.forceKeep = true;
+                emitPending(stack);
+            }
+        }
+
+        if (frame == 0) {
+            if (!stack.forceKeep) {
+                if (sampler.shouldSampleTrace(stack.maxDurationNs, stack.anyError)) {
+                    emitPending(stack);
+                } else {
+                    stack.pending.clear();
+                }
+            }
+            stack.resetTrace();
+            SPANS.remove();
+        }
+    }
+
+    private static void emitPending(SpanStack stack) {
+        MetricRingBuffer target = buffer;
+        for (int i = 0; i < stack.pending.size(); i++) {
+            target.offer(stack.pending.get(i));
+        }
+        stack.pending.clear();
     }
 
     /**

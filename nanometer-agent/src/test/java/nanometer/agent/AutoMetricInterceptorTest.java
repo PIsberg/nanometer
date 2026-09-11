@@ -1,6 +1,8 @@
 package nanometer.agent;
 
 import nanometer.buffer.MetricRingBuffer;
+import nanometer.sampling.AdaptiveSampler;
+import nanometer.trace.W3CTraceContext;
 import nanometer.model.RelationalMetricEvent;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -149,5 +151,161 @@ public class AutoMetricInterceptorTest {
         NanometerAgent.agentmain(null, mockInst);
         NanometerAgent agent = new NanometerAgent();
         assertNotNull(agent);
+    }
+
+    @Test
+    public void aDroppedTraceDropsEveryOneOfItsSpansNotARandomSubset() throws Throwable {
+        // Rate 0 with tail sampling off means nothing is interesting, so the whole trace goes.
+        AdaptiveSampler sampler = new AdaptiveSampler();
+        sampler.setTailSamplingEnabled(false);
+        sampler.setSampleRate(0.0);
+        AutoMetricInterceptor.setSampler(sampler);
+        try {
+            Method parentMethod = TestService.class.getMethod("successfulCall");
+            Method childMethod = TestService.class.getMethod("successfulCall");
+            TestService instance = new TestService();
+
+            AutoMetricInterceptor.intercept(parentMethod, () ->
+                    nested(childMethod, instance::successfulCall));
+
+            assertEquals(0, buffer.size(), "a dropped trace must leave no orphaned children behind");
+        } finally {
+            AutoMetricInterceptor.setSampler(new AdaptiveSampler());
+        }
+    }
+
+    @Test
+    public void aKeptTraceKeepsEveryOneOfItsSpans() throws Throwable {
+        AdaptiveSampler sampler = new AdaptiveSampler();
+        sampler.setTailSamplingEnabled(false);
+        sampler.setSampleRate(1.0);
+        AutoMetricInterceptor.setSampler(sampler);
+        try {
+            Method method = TestService.class.getMethod("successfulCall");
+            TestService instance = new TestService();
+
+            AutoMetricInterceptor.intercept(method, () ->
+                    nested(method, instance::successfulCall));
+
+            assertEquals(2, buffer.size(), "both spans of the trace are kept together");
+        } finally {
+            AutoMetricInterceptor.setSampler(new AdaptiveSampler());
+        }
+    }
+
+    @Test
+    public void aTraceContainingAnErrorIsKeptEvenAtZeroRate() throws Throwable {
+        AdaptiveSampler sampler = new AdaptiveSampler();
+        sampler.setSampleRate(0.0);
+        sampler.setTailSamplingEnabled(true);
+        AutoMetricInterceptor.setSampler(sampler);
+        try {
+            Method outer = TestService.class.getMethod("successfulCall");
+            Method failing = TestService.class.getMethod("failureCall");
+            TestService instance = new TestService();
+
+            assertThrows(IllegalArgumentException.class, () ->
+                    AutoMetricInterceptor.intercept(outer, () -> {
+                        nested(failing, () -> {
+                            instance.failureCall();
+                            return null;
+                        });
+                        return null;
+                    }));
+
+            // Retaining a failing trace whatever the rate says is the point of tail sampling, and
+            // it must retain the caller's span too or the failure has no context.
+            assertEquals(2, buffer.size(), "an error trace is kept whole, at any sample rate");
+        } finally {
+            AutoMetricInterceptor.setSampler(new AdaptiveSampler());
+        }
+    }
+
+    @Test
+    public void aFailingChildKeepsItsCallerEvenWhenTheCallerSwallowsTheError() throws Throwable {
+        // The decisive case for per-trace versus per-span sampling. At rate 0 with tail sampling on,
+        // a per-span decision keeps the throwing child (it looks interesting) and drops the caller
+        // that caught the error (fast, no exception), leaving an orphan whose parent span is gone
+        // and an edge the topology graph can never draw.
+        AdaptiveSampler sampler = new AdaptiveSampler();
+        sampler.setSampleRate(0.0);
+        sampler.setTailSamplingEnabled(true);
+        AutoMetricInterceptor.setSampler(sampler);
+        try {
+            Method outer = TestService.class.getMethod("successfulCall");
+            Method failing = TestService.class.getMethod("failureCall");
+            TestService instance = new TestService();
+
+            AutoMetricInterceptor.intercept(outer, () -> {
+                try {
+                    nested(failing, () -> {
+                        instance.failureCall();
+                        return null;
+                    });
+                } catch (IllegalArgumentException handled) {
+                    // The caller handles it, so its own span exits cleanly.
+                }
+                return "SUCCESS";
+            });
+
+            List<RelationalMetricEvent> events = buffer.drainAll();
+            assertEquals(2, events.size(),
+                    "the trace contains an error so all of it is kept, caller included; a per-span "
+                            + "decision keeps only the throwing child. Got: " + events);
+            assertTrue(events.stream().anyMatch(e -> !e.hasException()),
+                    "the clean caller span must survive alongside the failing one");
+        } finally {
+            AutoMetricInterceptor.setSampler(new AdaptiveSampler());
+        }
+    }
+
+    @Test
+    public void spansJoinAnAdoptedInboundTraceInsteadOfStartingAFreshOne() throws Throwable {
+        // The whole point of W3C trace context: a trace crosses the process boundary. Nothing
+        // consulted W3CTraceContext before, so every service restarted the trace at its edge.
+        String inbound = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+        W3CTraceContext.TraceSpan adopted = W3CTraceContext.adoptIncoming(inbound);
+        assertNotNull(adopted);
+        try {
+            Method method = TestService.class.getMethod("successfulCall");
+            TestService instance = new TestService();
+
+            AutoMetricInterceptor.intercept(method, instance::successfulCall);
+
+            RelationalMetricEvent event = buffer.drainAll().get(0);
+            assertEquals("4bf92f3577b34da6a3ce929d0e0e4736", event.traceIdHex(),
+                    "the span must carry the caller's trace id, not a locally invented one");
+            assertEquals(adopted.parentSpanId(), event.parentSpanId(),
+                    "the local root descends from the remote caller's span");
+            assertNotEquals(0L, event.parentSpanId(),
+                    "a continued trace's root is not parentless");
+        } finally {
+            W3CTraceContext.clear();
+        }
+    }
+
+    @Test
+    public void spansStartAFreshTraceWhenThereIsNoInboundContext() throws Throwable {
+        W3CTraceContext.clear();
+        Method method = TestService.class.getMethod("successfulCall");
+        TestService instance = new TestService();
+
+        AutoMetricInterceptor.intercept(method, instance::successfulCall);
+
+        RelationalMetricEvent event = buffer.drainAll().get(0);
+        assertEquals(0L, event.parentSpanId(), "a root with no inbound context has no parent");
+        assertNotEquals("00000000000000000000000000000000", event.traceIdHex());
+    }
+
+    /** Callable.call declares Exception, but intercept declares Throwable; bridge the two. */
+    private static Object nested(Method method, java.util.concurrent.Callable<?> inner) throws Exception {
+        try {
+            return AutoMetricInterceptor.intercept(method, inner);
+        } catch (Throwable t) {
+            if (t instanceof Exception e) {
+                throw e;
+            }
+            throw new RuntimeException(t);
+        }
     }
 }

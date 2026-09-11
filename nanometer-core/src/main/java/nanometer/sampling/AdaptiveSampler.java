@@ -53,6 +53,32 @@ public class AdaptiveSampler {
         return ThreadLocalRandom.current().nextDouble() < rate;
     }
 
+    /**
+     * Decides the fate of a whole trace, once it is complete.
+     *
+     * <p>This is what tail sampling means. Deciding per span, as {@link #shouldSample} does, keeps a
+     * random subset of each trace's spans at any rate below 1.0, so surviving children reference
+     * parents that were dropped and the call graph silently loses those edges. At the default rate
+     * of 1.0 nothing was visibly wrong, which is why it went unnoticed.
+     *
+     * @param maxDurationNs the longest span in the trace, which is the root unless a child overran
+     * @param anyError      whether any span in the trace left by throwing
+     */
+    public boolean shouldSampleTrace(long maxDurationNs, boolean anyError) {
+        double maxDurationMs = maxDurationNs / 1_000_000.0;
+
+        // Keep every trace that is interesting, whatever the rate says.
+        if (tailSamplingEnabled.get() && (anyError || maxDurationMs >= slowTraceThresholdMs.get())) {
+            return true;
+        }
+
+        double rate = sampleRate.get();
+        if (rate >= 1.0) return true;
+        if (rate <= 0.0) return false;
+
+        return ThreadLocalRandom.current().nextDouble() < rate;
+    }
+
     public boolean isClassIncluded(String className) {
         if (activePackages.isEmpty()) {
             return true;
