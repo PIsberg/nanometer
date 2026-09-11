@@ -15,7 +15,7 @@ paths: ["**/MetricRingBuffer.java"]
 
 ## Thread-Safety Guarantee
 - **Strategy**: LOCK_FREE
-- **Note**: Lock-free circular buffer with atomic CAS sequences
+- **Note**: Per-slot sequence stamps make this safe for any number of producers and consumers
 
 ### Rules for method offer
 - **Policy**: ZERO_ALLOCATION

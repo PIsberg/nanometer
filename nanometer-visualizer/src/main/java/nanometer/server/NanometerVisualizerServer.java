@@ -7,6 +7,7 @@ import nanometer.anomaly.AnomalyDetector;
 import nanometer.anomaly.RootCauseAnalyzer;
 import nanometer.discovery.GraphAutoDiscoveryEngine;
 import nanometer.export.OtlpJsonExporter;
+import nanometer.model.RelationalMetricEvent;
 import nanometer.graph.GraphMetricAggregator;
 import nanometer.profiling.JfrProfileSampler;
 import nanometer.sampling.AdaptiveSampler;
@@ -14,8 +15,6 @@ import nanometer.storage.MetricDatabaseFlusher;
 import nanometer.storage.MetricQueryService;
 import nanometer.system.SystemMetricsSampler;
 import org.jspecify.annotations.Nullable;
-import se.deversity.vibetags.annotations.AICore;
-import se.deversity.vibetags.annotations.AIObservability;
 import se.deversity.vibetags.annotations.AIPublicAPI;
 import se.deversity.vibetags.annotations.AIThreadSafe;
 
@@ -23,16 +22,21 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.URLDecoder;
+import java.security.MessageDigest;
+import java.security.SecureRandom;
+import java.util.HexFormat;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 /**
  * Lightweight embedded visualizer server providing real-time APM telemetry, flamegraphs, SQL analytics, and root cause analysis.
  */
-@AICore(sensitivity = "High", note = "Embedded zero-dependency HTTP visualizer server with analytics and flamegraphs")
 @AIPublicAPI(reason = "Embedded APM server dashboard lifecycle and REST analytics APIs")
-@AIObservability(metrics = {"http_requests_total"}, traces = {})
 @AIThreadSafe(strategy = AIThreadSafe.Strategy.SYNCHRONIZED, note = "Thread-safe server lifecycle management")
 public class NanometerVisualizerServer {
 
@@ -44,6 +48,20 @@ public class NanometerVisualizerServer {
     private final JfrProfileSampler profileSampler;
     private final AdaptiveSampler adaptiveSampler;
     private @Nullable HttpServer server;
+    private @Nullable ExecutorService executor;
+
+    /**
+     * Address the server binds to. Loopback by default: this dashboard exposes class and method
+     * names, call stacks, exception cascades, a SQL endpoint and runtime sampler controls, none of
+     * which belongs on a network interface unless someone asks for it explicitly.
+     */
+    private final InetAddress bindAddress;
+
+    /**
+     * Shared secret required by every {@code /api/*} request. The dashboard page is same-origin and
+     * receives it inlined, so a browser on another origin cannot read it.
+     */
+    private final String authToken;
 
     public NanometerVisualizerServer(int port, GraphMetricAggregator aggregator, @Nullable MetricDatabaseFlusher flusher) {
         this(port, aggregator, flusher, null, null, null, null);
@@ -58,6 +76,25 @@ public class NanometerVisualizerServer {
             @Nullable JfrProfileSampler profileSampler,
             @Nullable AdaptiveSampler adaptiveSampler
     ) {
+        this(port, aggregator, flusher, queryService, anomalyDetector, profileSampler, adaptiveSampler,
+                InetAddress.getLoopbackAddress(), generateToken());
+    }
+
+    /**
+     * @param bindAddress pass a non-loopback address only deliberately; see {@link #bindAddress}
+     * @param authToken   secret required on every {@code /api/*} request
+     */
+    public NanometerVisualizerServer(
+            int port,
+            GraphMetricAggregator aggregator,
+            @Nullable MetricDatabaseFlusher flusher,
+            @Nullable MetricQueryService queryService,
+            @Nullable AnomalyDetector anomalyDetector,
+            @Nullable JfrProfileSampler profileSampler,
+            @Nullable AdaptiveSampler adaptiveSampler,
+            InetAddress bindAddress,
+            String authToken
+    ) {
         this.port = port;
         this.aggregator = aggregator;
         this.flusher = flusher;
@@ -65,6 +102,19 @@ public class NanometerVisualizerServer {
         this.anomalyDetector = anomalyDetector != null ? anomalyDetector : new AnomalyDetector();
         this.profileSampler = profileSampler != null ? profileSampler : new JfrProfileSampler();
         this.adaptiveSampler = adaptiveSampler != null ? adaptiveSampler : new AdaptiveSampler();
+        this.bindAddress = bindAddress;
+        this.authToken = authToken;
+    }
+
+    private static String generateToken() {
+        byte[] raw = new byte[24];
+        new SecureRandom().nextBytes(raw);
+        return HexFormat.of().formatHex(raw);
+    }
+
+    /** The token a caller must present, so an embedder can build its own dashboard URL. */
+    public String getAuthToken() {
+        return authToken;
     }
 
     public synchronized void start() {
@@ -72,7 +122,7 @@ public class NanometerVisualizerServer {
             return;
         }
         try {
-            HttpServer s = HttpServer.create(new InetSocketAddress(port), 0);
+            HttpServer s = HttpServer.create(new InetSocketAddress(bindAddress, port), 0);
             s.createContext("/", new DashboardHandler());
             s.createContext("/api/graph", new ApiGraphHandler());
             s.createContext("/api/system", new ApiSystemHandler());
@@ -82,10 +132,23 @@ public class NanometerVisualizerServer {
             s.createContext("/api/sql", new ApiSqlHandler());
             s.createContext("/api/control", new ApiControlHandler());
             s.createContext("/api/otlp", new ApiOtlpHandler());
-            s.setExecutor(null);
+            // The default executor runs every handler on the dispatcher thread, so one expensive
+            // /api/sql aggregation blocked every other endpoint, the dashboard included.
+            ExecutorService pool = Executors.newFixedThreadPool(4, r -> {
+                Thread t = new Thread(r, "nanometer-visualizer");
+                t.setDaemon(true);
+                return t;
+            });
+            s.setExecutor(pool);
             s.start();
+            this.executor = pool;
             this.server = s;
-            System.out.println("⚡ [Nanometer] Embedded APM Dashboard live at http://localhost:" + port);
+            System.out.println("[Nanometer] Embedded APM Dashboard live at http://"
+                    + bindAddress.getHostAddress() + ":" + port + "/?token=" + authToken);
+            if (!bindAddress.isLoopbackAddress()) {
+                System.out.println("[Nanometer] WARNING: bound to " + bindAddress.getHostAddress()
+                        + ", so the dashboard and its SQL endpoint are reachable from the network");
+            }
         } catch (IOException e) {
             System.err.println("[Nanometer] Failed to start visualizer: " + e.getMessage());
         }
@@ -96,11 +159,18 @@ public class NanometerVisualizerServer {
             server.stop(0);
             server = null;
         }
+        if (executor != null) {
+            executor.shutdownNow();
+            executor = null;
+        }
     }
 
     private class ApiGraphHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
+            if (rejectIfUnauthorized(exchange)) {
+                return;
+            }
             if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
                 exchange.sendResponseHeaders(405, -1);
                 return;
@@ -113,21 +183,37 @@ public class NanometerVisualizerServer {
         }
     }
 
-    private static class ApiSystemHandler implements HttpHandler {
+    private class ApiSystemHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
+            if (rejectIfUnauthorized(exchange)) {
+                return;
+            }
             if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
                 exchange.sendResponseHeaders(405, -1);
                 return;
             }
+            // The tool's own health travels with the host's. A profiler that silently sheds spans
+            // while presenting a confident dashboard is the worst failure mode available to it, and
+            // getDroppedCount() was counted and never shown anywhere.
             String json = SystemMetricsSampler.captureSnapshot().toJson();
-            sendJsonResponse(exchange, 200, json);
+            String self = "\"nanometer\":{"
+                    + "\"bufferDepth\":" + bufferDepth() + ","
+                    + "\"droppedEvents\":" + droppedEvents()
+                    + "}";
+            String merged = json.endsWith("}")
+                    ? json.substring(0, json.length() - 1) + "," + self + "}"
+                    : json;
+            sendJsonResponse(exchange, 200, merged);
         }
     }
 
     private class ApiFlamegraphHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
+            if (rejectIfUnauthorized(exchange)) {
+                return;
+            }
             if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
                 exchange.sendResponseHeaders(405, -1);
                 return;
@@ -140,6 +226,9 @@ public class NanometerVisualizerServer {
     private class ApiAnomaliesHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
+            if (rejectIfUnauthorized(exchange)) {
+                return;
+            }
             if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
                 exchange.sendResponseHeaders(405, -1);
                 return;
@@ -152,6 +241,9 @@ public class NanometerVisualizerServer {
     private class ApiRcaHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
+            if (rejectIfUnauthorized(exchange)) {
+                return;
+            }
             if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
                 exchange.sendResponseHeaders(405, -1);
                 return;
@@ -171,6 +263,9 @@ public class NanometerVisualizerServer {
     private class ApiSqlHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
+            if (rejectIfUnauthorized(exchange)) {
+                return;
+            }
             if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
                 exchange.sendResponseHeaders(405, -1);
                 return;
@@ -188,6 +283,9 @@ public class NanometerVisualizerServer {
     private class ApiControlHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
+            if (rejectIfUnauthorized(exchange)) {
+                return;
+            }
             if ("GET".equalsIgnoreCase(exchange.getRequestMethod())) {
                 sendJsonResponse(exchange, 200, adaptiveSampler.toJson());
                 return;
@@ -217,19 +315,81 @@ public class NanometerVisualizerServer {
     private class ApiOtlpHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
+            if (rejectIfUnauthorized(exchange)) {
+                return;
+            }
             if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
                 exchange.sendResponseHeaders(405, -1);
                 return;
             }
-            String json = OtlpJsonExporter.exportToJson("nanometer-service", List.of());
-            sendJsonResponse(exchange, 200, json);
+            // This used to pass List.of(), so the endpoint always answered with an envelope
+            // containing no spans however much telemetry had been collected.
+            List<RelationalMetricEvent> spans = flusher != null ? flusher.recentEvents() : List.of();
+            sendJsonResponse(exchange, 200, OtlpJsonExporter.exportToJson("nanometer-service", spans));
         }
+    }
+
+    private int bufferDepth() {
+        return flusher != null ? flusher.getBufferDepth() : 0;
+    }
+
+    private long droppedEvents() {
+        return flusher != null ? flusher.getDroppedEventCount() : 0L;
+    }
+
+    /**
+     * Teaches the page to forward the token its own URL carries on every API call, rather than
+     * editing each fetch site inside the dashboard markup.
+     */
+    private static String withTokenForwarding(String html) {
+        String shim = "<script>(function(){"
+                + "var t=new URLSearchParams(location.search).get('token')||'';"
+                + "var f=window.fetch;"
+                + "window.fetch=function(u,o){o=o||{};"
+                + "if(typeof u==='string'&&u.indexOf('/api/')===0){"
+                + "o.headers=Object.assign({},o.headers||{},{'X-Nanometer-Token':t});}"
+                + "return f(u,o);};})();</script>";
+        return html.replaceFirst("<head>", "<head>" + java.util.regex.Matcher.quoteReplacement(shim));
+    }
+
+    /**
+     * Rejects an unauthenticated request. Compared with a constant-time check so the
+     * token cannot be recovered a byte at a time.
+     */
+    private boolean rejectIfUnauthorized(HttpExchange exchange) throws IOException {
+        String presented = exchange.getRequestHeaders().getFirst("X-Nanometer-Token");
+        if (presented == null) {
+            presented = queryParameter(exchange, "token");
+        }
+        if (presented != null && MessageDigest.isEqual(
+                presented.getBytes(StandardCharsets.UTF_8), authToken.getBytes(StandardCharsets.UTF_8))) {
+            return false;
+        }
+        sendJsonResponse(exchange, 401, "{\"error\":\"missing or invalid token; "
+                + "the dashboard URL printed at startup carries it\"}");
+        return true;
+    }
+
+    private static @Nullable String queryParameter(HttpExchange exchange, String name) {
+        String query = exchange.getRequestURI().getRawQuery();
+        if (query == null) {
+            return null;
+        }
+        for (String pair : query.split("&")) {
+            int eq = pair.indexOf('=');
+            if (eq > 0 && pair.substring(0, eq).equals(name)) {
+                return URLDecoder.decode(pair.substring(eq + 1), StandardCharsets.UTF_8);
+            }
+        }
+        return null;
     }
 
     private static void sendJsonResponse(HttpExchange exchange, int statusCode, String body) throws IOException {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().set("Content-Type", "application/json; charset=UTF-8");
-        exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+        // No Access-Control-Allow-Origin: the wildcard let any page the developer happened to be
+        // browsing read every endpoint, including the SQL one, even on a loopback bind.
+        exchange.getResponseHeaders().set("Cache-Control", "no-store");
         exchange.sendResponseHeaders(statusCode, bytes.length);
         try (OutputStream os = exchange.getResponseBody()) {
             os.write(bytes);
@@ -247,11 +407,16 @@ public class NanometerVisualizerServer {
         }
     }
 
-    private static class DashboardHandler implements HttpHandler {
+    private class DashboardHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
             if (!"/".equals(exchange.getRequestURI().getPath())) {
                 exchange.sendResponseHeaders(404, -1);
+                return;
+            }
+            // The page is gated too. Serving it unauthenticated would hand the token to anyone who
+            // could reach the port, which is exactly the case a token is meant to cover.
+            if (rejectIfUnauthorized(exchange)) {
                 return;
             }
             String html = """
@@ -806,8 +971,9 @@ public class NanometerVisualizerServer {
                 </body>
                 </html>
             """;
-            byte[] bytes = html.getBytes(StandardCharsets.UTF_8);
+            byte[] bytes = withTokenForwarding(html).getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "text/html; charset=UTF-8");
+            exchange.getResponseHeaders().set("Cache-Control", "no-store");
             exchange.sendResponseHeaders(200, bytes.length);
             try (OutputStream os = exchange.getResponseBody()) {
                 os.write(bytes);

@@ -5,6 +5,17 @@ import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -100,5 +111,179 @@ public class MetricRingBufferTest {
         List<RelationalMetricEvent> drained = buffer.drainAll();
         assertFalse(drained.isEmpty());
         assertEquals(0, buffer.size());
+    }
+
+    @Test
+    public void concurrentProducersAndAConsumerNeitherLoseNorDuplicateEvents() throws Exception {
+        int producers = 6;
+        int perProducer = 20_000;
+        MetricRingBuffer buffer = new MetricRingBuffer(1024);
+
+        AtomicLong accepted = new AtomicLong();
+        AtomicBoolean stop = new AtomicBoolean();
+        Set<Long> drainedIds = ConcurrentHashMap.newKeySet();
+        AtomicLong drainedCount = new AtomicLong();
+
+        Thread consumer = new Thread(() -> {
+            List<RelationalMetricEvent> batch = new ArrayList<>();
+            while (!stop.get() || buffer.size() > 0) {
+                batch.clear();
+                buffer.drainTo(batch, 256);
+                for (RelationalMetricEvent e : batch) {
+                    drainedIds.add(e.currentSpanId());
+                    drainedCount.incrementAndGet();
+                }
+            }
+        }, "drainer");
+        consumer.start();
+
+        ExecutorService pool = Executors.newFixedThreadPool(producers);
+        CountDownLatch done = new CountDownLatch(producers);
+        for (int p = 0; p < producers; p++) {
+            final long base = (long) p * perProducer + 1;
+            pool.submit(() -> {
+                try {
+                    for (int i = 0; i < perProducer; i++) {
+                        RelationalMetricEvent event = new RelationalMetricEvent(
+                                0L, 1L, 0L, base + i, "C", "m", "", "",
+                                1_000L, "NONE", 0L);
+                        if (buffer.offer(event)) {
+                            accepted.incrementAndGet();
+                        }
+                    }
+                } finally {
+                    done.countDown();
+                }
+            });
+        }
+
+        assertTrue(done.await(60, TimeUnit.SECONDS), "producers did not finish");
+        stop.set(true);
+        consumer.join(60_000);
+        pool.shutdownNow();
+
+        // Everything offer() accepted must come out exactly once. A slot published before its
+        // payload was written, or two drains racing on the read cursor, shows up as a shortfall.
+        assertEquals(accepted.get(), drainedCount.get(),
+                "accepted " + accepted.get() + " but drained " + drainedCount.get()
+                        + "; dropped=" + buffer.getDroppedCount());
+        assertEquals(accepted.get(), drainedIds.size(),
+                "an event was drained more than once");
+    }
+
+    @Test
+    public void twoConcurrentDrainersNeitherLoseNorDuplicateEvents() throws Exception {
+        int total = 50_000;
+        MetricRingBuffer buffer = new MetricRingBuffer(1024);
+
+        AtomicLong accepted = new AtomicLong();
+        AtomicBoolean stop = new AtomicBoolean();
+        Set<Long> seen = ConcurrentHashMap.newKeySet();
+        AtomicLong drained = new AtomicLong();
+        AtomicLong duplicates = new AtomicLong();
+
+        Runnable drainer = () -> {
+            List<RelationalMetricEvent> batch = new ArrayList<>();
+            while (!stop.get() || buffer.size() > 0) {
+                batch.clear();
+                buffer.drainTo(batch, 64);
+                for (RelationalMetricEvent e : batch) {
+                    if (!seen.add(e.currentSpanId())) {
+                        duplicates.incrementAndGet();
+                    }
+                    drained.incrementAndGet();
+                }
+            }
+        };
+        Thread d1 = new Thread(drainer, "drainer-1");
+        Thread d2 = new Thread(drainer, "drainer-2");
+        d1.start();
+        d2.start();
+
+        for (int i = 1; i <= total; i++) {
+            RelationalMetricEvent event = new RelationalMetricEvent(
+                    0L, 1L, 0L, i, "C", "m", "", "", 1_000L, "NONE", 0L);
+            if (buffer.offer(event)) {
+                accepted.incrementAndGet();
+            }
+        }
+        stop.set(true);
+        d1.join(60_000);
+        d2.join(60_000);
+
+        // One drainer at a time, so the other simply gets nothing. What must never happen is an
+        // event delivered twice, an event lost, or the buffer stranded so later offers are dropped.
+        assertEquals(0, duplicates.get(), "the same event was handed to both drainers");
+        assertEquals(accepted.get(), drained.get(),
+                "accepted " + accepted.get() + " but drained " + drained.get()
+                        + "; concurrent drains stranded the buffer");
+    }
+
+    @Test
+    public void manyProducersAndManyConsumersNeitherLoseNorDuplicateEvents() throws Exception {
+        int producers = 4;
+        int consumers = 4;
+        int perProducer = 25_000;
+        MetricRingBuffer buffer = new MetricRingBuffer(256);
+
+        AtomicLong accepted = new AtomicLong();
+        AtomicLong drained = new AtomicLong();
+        AtomicLong duplicates = new AtomicLong();
+        Set<Long> seen = ConcurrentHashMap.newKeySet();
+        AtomicBoolean producersDone = new AtomicBoolean();
+
+        List<Thread> consumerThreads = new ArrayList<>();
+        for (int c = 0; c < consumers; c++) {
+            Thread t = new Thread(() -> {
+                while (!producersDone.get() || buffer.size() > 0) {
+                    RelationalMetricEvent e = buffer.poll();
+                    if (e == null) {
+                        Thread.onSpinWait();
+                        continue;
+                    }
+                    if (!seen.add(e.currentSpanId())) {
+                        duplicates.incrementAndGet();
+                    }
+                    drained.incrementAndGet();
+                }
+            }, "consumer-" + c);
+            consumerThreads.add(t);
+            t.start();
+        }
+
+        ExecutorService pool = Executors.newFixedThreadPool(producers);
+        CountDownLatch done = new CountDownLatch(producers);
+        for (int p = 0; p < producers; p++) {
+            final long base = (long) p * perProducer + 1;
+            pool.submit(() -> {
+                try {
+                    for (int i = 0; i < perProducer; i++) {
+                        RelationalMetricEvent event = new RelationalMetricEvent(
+                                0L, 1L, 0L, base + i, "C", "m", "", "", 1_000L, "NONE", 0L);
+                        if (buffer.offer(event)) {
+                            accepted.incrementAndGet();
+                        }
+                    }
+                } finally {
+                    done.countDown();
+                }
+            });
+        }
+
+        assertTrue(done.await(120, TimeUnit.SECONDS), "producers did not finish");
+        producersDone.set(true);
+        for (Thread t : consumerThreads) {
+            t.join(120_000);
+            assertFalse(t.isAlive(), "a consumer never finished; the buffer stranded");
+        }
+        pool.shutdownNow();
+
+        // Every position is taken by exactly one consumer, and no payload is read before its
+        // producer has stored it. A slot published before its value was written, or a read cursor
+        // advanced non-atomically, breaks one of these two.
+        assertEquals(0, duplicates.get(), "an event was delivered to more than one consumer");
+        assertEquals(accepted.get(), drained.get(),
+                "accepted " + accepted.get() + " but drained " + drained.get());
+        assertTrue(accepted.get() > 0, "the run proved nothing; nothing was accepted");
     }
 }

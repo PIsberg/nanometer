@@ -1,8 +1,6 @@
 package nanometer.profiling;
 
 import org.jspecify.annotations.Nullable;
-import se.deversity.vibetags.annotations.AICore;
-import se.deversity.vibetags.annotations.AIObservability;
 import se.deversity.vibetags.annotations.AIPublicAPI;
 import se.deversity.vibetags.annotations.AIThreadSafe;
 
@@ -15,8 +13,6 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * On-demand stack profile sampler and hierarchical Flamegraph aggregator.
  */
-@AICore(sensitivity = "High", note = "On-demand execution stack frame profiler and Flamegraph tree generator")
-@AIObservability(metrics = {"profiled_samples_total", "flamegraph_tree_depth"})
 @AIPublicAPI(reason = "Public interface for capturing and rendering call-tree flamegraphs")
 @AIThreadSafe(strategy = AIThreadSafe.Strategy.LOCK_FREE, note = "Concurrent hierarchical frame aggregation")
 public class JfrProfileSampler {

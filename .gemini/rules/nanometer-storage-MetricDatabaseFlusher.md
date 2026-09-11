@@ -15,5 +15,5 @@ paths: ["**/MetricDatabaseFlusher.java"]
 
 ## Observability Instrumentation
 - **Rule**: Do not remove or rename instrumentation without flagging the affected dashboard.
-- **Details**: Metrics: db_batch_drain_count, db_write_latency_ms.
+- **Details**: Metrics: bufferDepth, droppedEventCount.
 <!-- VIBETAGS-END -->

@@ -1,7 +1,6 @@
 package nanometer.system;
 
 import org.jspecify.annotations.Nullable;
-import se.deversity.vibetags.annotations.AICore;
 import se.deversity.vibetags.annotations.AIObservability;
 import se.deversity.vibetags.annotations.AIPublicAPI;
 
@@ -14,8 +13,7 @@ import java.lang.management.ThreadMXBean;
 /**
  * System and JVM telemetry sampler measuring CPU load, Heap & Non-Heap Memory, thread counts, and uptime.
  */
-@AICore(sensitivity = "High", note = "JVM runtime telemetry and hardware utilization sampler")
-@AIObservability(metrics = {"cpu_process_percent", "cpu_system_percent", "heap_used_mb", "thread_count"})
+@AIObservability(metrics = {"processCpu", "systemCpu", "heapUsedMb", "heapMaxMb", "threadCount"})
 @AIPublicAPI(reason = "Public interface for capturing instant JVM & OS resource utilization snapshots")
 public class SystemMetricsSampler {
 

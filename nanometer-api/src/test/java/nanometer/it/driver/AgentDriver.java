@@ -39,7 +39,7 @@ public final class AgentDriver {
             System.out.println("EVENT"
                     + " class=" + value(type, event, "className")
                     + " method=" + value(type, event, "methodName")
-                    + " traceId=" + value(type, event, "traceId")
+                    + " traceId=" + value(type, event, "traceIdHex")
                     + " spanId=" + value(type, event, "currentSpanId")
                     + " parentSpanId=" + value(type, event, "parentSpanId")
                     + " exception=" + value(type, event, "exceptionType")
