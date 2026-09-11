@@ -20,7 +20,7 @@ The following elements are well-tested core components. Make changes with extrem
 ## PERFORMANCE CONSTRAINTS (HOT PATH)
 Never introduce O(n²) complexity into these elements. Always reason about complexity before proposing changes:
 
-- `nanometer.agent.AutoMetricInterceptor.exitSpan(java.lang.String,java.lang.String,long,java.lang.Throwable)`: Minimal execution overhead, atomic thread correlation
+- `nanometer.agent.AutoMetricInterceptor.exitSpan(java.lang.String,java.lang.String,long,java.lang.@org.jspecify.annotations.Nullable Throwable)`: Minimal execution overhead, atomic thread correlation
 - `nanometer.agent.AutoMetricInterceptor.intercept(java.lang.reflect.Method,java.util.concurrent.Callable<?>)`: Minimal execution overhead, atomic thread correlation
 
 ## THREAD-SAFE BY DESIGN
@@ -86,7 +86,7 @@ Never introduce O(n²) complexity into these elements. Always reason about compl
 These elements are thread-safe by design — preserve the synchronization invariant on every change:
 
 - `nanometer.anomaly.AnomalyDetector`: Strategy: SYNCHRONIZED. Note: Thread-safe Welford statistic accumulation
-- `nanometer.buffer.MetricRingBuffer`: Strategy: LOCK_FREE. Note: Many producers, one draining consumer at a time; concurrent drains are turned away
+- `nanometer.buffer.MetricRingBuffer`: Strategy: LOCK_FREE. Note: Per-slot sequence stamps make this safe for any number of producers and consumers
 - `nanometer.graph.GraphMetricAggregator`: Strategy: LOCK_FREE. Note: ConcurrentHashMap and LongAdder aggregation
 - `nanometer.profiling.JfrProfileSampler`: Strategy: LOCK_FREE. Note: Concurrent hierarchical frame aggregation
 - `nanometer.sampling.AdaptiveSampler`: Strategy: LOCK_FREE. Note: Thread-safe atomic sampling and concurrent package sets
