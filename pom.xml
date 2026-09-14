@@ -35,7 +35,7 @@
         <jspecify.version>1.0.1</jspecify.version>
         <spotbugs.version>4.10.4</spotbugs.version>
         <spotbugs.plugin.version>4.8.3.1</spotbugs.plugin.version>
-        <pmd.plugin.version>3.22.0</pmd.plugin.version>
+        <pmd.plugin.version>3.28.0</pmd.plugin.version>
         <pmd.version>7.0.0</pmd.version>
         <archunit.version>1.5.0</archunit.version>
         <jacoco.version>0.8.12</jacoco.version>
